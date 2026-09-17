@@ -1,0 +1,15 @@
+{% extends "forms.html" %}
+{% set title = "Create account" %}{% set button = "Register" %}
+{% block fields %}<label>Username<input name="username" required></label><label>Email<input type="email" name="email" required></label><label>Password<span class="password-field"><input id="register-password" type="password" name="password" minlength="8" required><button class="password-toggle" type="button" aria-controls="register-password" aria-pressed="false">Show</button></span></label><label>Role<select name="role"><option value="USER">User</option><option value="ADMIN">Administrator</option></select></label>{% endblock %}
+{% block links %}<a href="{{ url_for('login') }}">Back to sign in</a>{% endblock %}
+{% block scripts %}<script>
+	const passwordInput = document.querySelector('#register-password');
+	const passwordToggle = document.querySelector('.password-toggle');
+
+	passwordToggle.addEventListener('click', () => {
+		const isVisible = passwordInput.type === 'text';
+		passwordInput.type = isVisible ? 'password' : 'text';
+		passwordToggle.textContent = isVisible ? 'Show' : 'Hide';
+		passwordToggle.setAttribute('aria-pressed', String(!isVisible));
+	});
+</script>{% endblock %}

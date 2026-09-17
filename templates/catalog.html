@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="intro">
+    <div>
+        <p class="eyebrow">Student area</p>
+        <h1>Hardware Catalog</h1>
+    </div>
+    <div class="stats"><strong>{{ total_stocks }}</strong><small>Total stocks</small></div>
+</div>
+<section class="panel">
+    <div class="panel-heading">
+        <h2>Available Items</h2>
+        <form class="search-form" method="get" action="{{ url_for('catalog') }}">
+            <input name="q" value="{{ search_term }}" placeholder="Search item or category"
+                aria-label="Search hardware catalog">
+            <button type="submit">Search</button>
+            {% if search_term %}<a href="{{ url_for('catalog') }}">Clear</a>{% endif %}
+        </form>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Category</th>
+                <th>Stock</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row[1] }}</td>
+                <td>{{ row[2] }}</td>
+                <td>{{ row[3] }}</td>
+                <td><span class="status status-{{ row[5]|lower|replace(' ', '-') }}">{{ row[5] }}</span></td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4">No matching hardware found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

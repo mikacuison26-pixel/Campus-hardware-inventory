@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="auth-card">
+  <p class="eyebrow">Campus Hardware Inventory</p>
+  <h1>{{ title }}</h1>
+  <form method="post">
+    {% block fields %}{% endblock %}
+    <button>{{ button }}</button>
+  </form>
+  <nav>{% block links %}{% endblock %}</nav>
+</section>
+{% block scripts %}{% endblock %}
+{% endblock %}

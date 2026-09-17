@@ -1,0 +1,10 @@
+ID,Item Name,Category,Quantity,Unit Price,Status
+1,1700,IC,40,35.0,In Stock
+2,Ultrasonic,Sensor,25,150.0,In Stock
+3,Mega,Microcontroller,5,600.0,Low Stock
+4,Raspberry Pi,Microprocessor,3,6000.0,Low Stock
+5,Green LED,LED,100,5.0,In Stock
+6,Red LED,LED,50,6.0,In Stock
+7,LM35,Sensor,2,55.0,Low Stock
+8,Arduino Uno,Microcontroller,6,350.0,In Stock
+9,L293D,Motor Driver,10,50.0,In Stock

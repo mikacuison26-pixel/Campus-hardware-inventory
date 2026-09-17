@@ -1,0 +1,15 @@
+{% extends "forms.html" %}
+{% set title = "Request password reset" %}{% set button = "Submit request" %}
+{% block fields %}<label>Username<input name="username" required></label><label>Registered email<input type="email" name="email" required></label><label>New password<span class="password-field"><input id="new-password" type="password" name="password" minlength="8" required><button class="password-toggle" type="button" aria-controls="new-password" aria-pressed="false">Show</button></span></label><label>Confirm password<span class="password-field"><input id="confirm-password" type="password" name="confirm_password" minlength="8" required><button class="password-toggle" type="button" aria-controls="confirm-password" aria-pressed="false">Show</button></span></label>{% endblock %}
+{% block links %}<a href="{{ url_for('login') }}">Back to sign in</a>{% endblock %}
+{% block scripts %}<script>
+	document.querySelectorAll('.password-toggle').forEach((passwordToggle) => {
+		passwordToggle.addEventListener('click', () => {
+			const passwordInput = document.getElementById(passwordToggle.getAttribute('aria-controls'));
+			const isVisible = passwordInput.type === 'text';
+			passwordInput.type = isVisible ? 'password' : 'text';
+			passwordToggle.textContent = isVisible ? 'Show' : 'Hide';
+			passwordToggle.setAttribute('aria-pressed', String(!isVisible));
+		});
+	});
+</script>{% endblock %}

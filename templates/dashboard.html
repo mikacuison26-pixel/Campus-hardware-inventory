@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="intro">
+    <div>
+        <p class="eyebrow">{{ 'Administrator' if is_admin else 'Student' }} dashboard</p>
+        <h1>Hardware at a glance</h1>
+    </div>
+    <div class="stats"><strong>{{ total_stocks }}</strong><small>Total stocks</small></div>
+    <div class="stats"><strong>{{ borrowed|length }}</strong><small>{{ 'Borrowed items' if is_admin else 'My borrowed
+            items' }}</small></div>{% if is_admin %}<div class="stats"><strong>{{ pending_borrows|length
+            }}</strong><small>Pending borrow requests</small></div>
+    <div class="stats"><strong>{{ pending_returns|length }}</strong><small>Pending returns</small></div>{% endif %}
+</div>
+{% if is_admin %}<section class="panel">
+    <h2>Add hardware</h2>
+    <form class="inline-form" method="post" action="{{ url_for('add_hardware') }}"><input name="item_name"
+            placeholder="Item name" required><input name="category" placeholder="Category" required><input
+            name="quantity" type="number" min="0" placeholder="Quantity" required><input name="unit_price" type="number"
+            min="0.01" step="0.01" placeholder="Unit price" required><button>Add item</button></form>
+</section>{% endif %}
+<section class="panel">
+    <div class="panel-heading">
+        <h2>Hardware Catalog</h2>
+        <form class="search-form" method="get" action="{{ url_for('dashboard') }}"><input name="q"
+                value="{{ search_term }}" placeholder="Search item or category"
+                aria-label="Search hardware catalog"><button type="submit">Search</button>{% if search_term %}<a
+                href="{{ url_for('dashboard') }}">Clear</a>{% endif %}</form>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Category</th>
+                <th>Stock</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>{% for row in rows %}<tr>
+                <td>{{ row[1] }}</td>
+                <td><span class="status status-{{ row[5]|lower|replace(' ', '-') }}">{{ row[5] }}</span></td>
+                <td>{{ row[3] }}</td>
+                <td><span class="status">{{ row[5] }}</span></td>
+                <td>{% if not is_admin %}<form class="inline-form" method="post" action="{{ url_for('borrow') }}"><input
+                            type="hidden" name="item_id" value="{{ row[0] }}"><input name="quantity" type="number"
+                            min="1" max="{{ row[3] }}" value="1" required><button>Request borrow</button></form>{% endif
+                    %}</td>
+            </tr>{% else %}<tr>
+                <td colspan="5">No matching hardware found.</td>
+            </tr>{% endfor %}</tbody>
+    </table>
+</section>
+<section class="panel">
+    <h2>{{ 'Borrowed Items' if is_admin else 'My Borrowed Items' }}</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Loan</th>
+                <th>Item</th>
+                <th>Student</th>
+                <th>Checked out</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>{% for loan in borrowed %}<tr>
+                <td>#{{ loan[0] }}</td>
+                <td>{{ loan[1] }}</td>
+                <td>{{ loan[2] }}</td>
+                <td>{{ loan[3] }}</td>
+                <td>{% if not is_admin %}<form method="post" action="{{ url_for('request_return', loan_id=loan[0]) }}">
+                        <button class="secondary">Request return</button>
+                    </form>{% endif %}</td>
+            </tr>{% else %}<tr>
+                <td colspan="5">No active borrowed items.</td>
+            </tr>{% endfor %}</tbody>
+    </table>
+</section>
+{% if is_admin %}<section class="split">
+    <section class="panel">
+        <h2>Pending borrow requests</h2>{% for item in pending_borrows %}<div class="request"><span>{{ item[1] }} · {{
+                item[2] }} · qty {{ item[3] }}</span><span>
+                <form method="post" action="{{ url_for('approve_borrow', request_id=item[0], action='approve') }}">
+                    <button>Approve</button>
+                </form>
+                <form method="post" action="{{ url_for('approve_borrow', request_id=item[0], action='reject') }}">
+                    <button class="danger">Reject</button>
+                </form>
+            </span></div>{% else %}<p>Nothing waiting for approval.</p>{% endfor %}
+    </section>
+    <section class="panel">
+        <h2>Pending returns</h2>{% for item in pending_returns %}<div class="request"><span>{{ item[1] }} · {{ item[2]
+                }}</span><span>
+                <form method="post" action="{{ url_for('approve_return', request_id=item[0], action='approve') }}">
+                    <button>Approve</button>
+                </form>
+                <form method="post" action="{{ url_for('approve_return', request_id=item[0], action='reject') }}">
+                    <button class="danger">Reject</button>
+                </form>
+            </span></div>{% else %}<p>Nothing waiting for approval.</p>{% endfor %}
+    </section>
+</section>
+<section class="panel">
+    <h2>Password reset requests</h2>{% for item in reset_requests %}<div class="request"><span>{{ item[1] }} · {{
+            item[2] }}</span><span>
+            <form method="post" action="{{ url_for('process_reset', request_id=item[0], action='approve') }}">
+                <button>Approve</button>
+            </form>
+            <form method="post" action="{{ url_for('process_reset', request_id=item[0], action='reject') }}"><button
+                    class="danger">Reject</button></form>
+        </span></div>{% else %}<p>Nothing waiting for approval.</p>{% endfor %}
+</section>{% endif %}
+{% endblock %}

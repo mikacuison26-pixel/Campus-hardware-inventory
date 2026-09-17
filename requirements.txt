@@ -1,0 +1,6 @@
+Flask
+bcrypt
+pydantic
+email-validator
+python-dotenv
+psycopg2-binary

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading">
+    <p class="eyebrow">{{ 'Administrator' if is_admin else 'Student' }} area</p>
+    <h1>History</h1>
+    <p class="page-summary">Review borrowed item activity and quantity records.</p>
+</div>
+
+<section class="panel">
+    <div class="panel-heading">
+        <h2>{{ 'System History' if is_admin else 'My Borrow History' }}</h2>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Category</th>
+                {% if is_admin %}<th>Student</th>{% endif %}
+                <th>Student ID</th>
+                <th>Quantity</th>
+                <th>Status</th>
+                <th>Last update</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in history %}
+            <tr>
+                <td>{{ row[0] }}</td>
+                <td>{{ row[1] }}</td>
+                {% if is_admin %}<td>{{ row[2] }}</td>{% endif %}
+                <td>{{ row[3] }}</td>
+                <td>{{ row[4] }}</td>
+                <td><span class="status status-{{ row[5]|lower|replace(' ', '-') }}">{{ row[5] }}</span></td>
+                <td>{{ row[7] }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="{{ 7 if is_admin else 6 }}">No borrowing history found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading">
+    <p class="eyebrow">Administrator area</p>
+    <h1>Requests</h1>
+    <p class="page-summary">Review borrow, return, and password reset requests.</p>
+</div>
+<section class="split">
+    <section class="panel">
+        <h2>Borrow Requests</h2>
+        {% for item in pending_borrows %}<div class="request"><span>{{ item[1] }} · {{ item[2] }} · ID: {{ item[3] }} ·
+                qty {{ item[4] }}</span><span>
+                <form method="post" action="{{ url_for('approve_borrow', request_id=item[0], action='approve') }}">
+                    <button>Approve</button>
+                </form>
+                <form method="post" action="{{ url_for('approve_borrow', request_id=item[0], action='reject') }}">
+                    <button class="danger">Reject</button>
+                </form>
+            </span></div>{% else %}<p>Nothing waiting for approval.</p>{% endfor %}
+    </section>
+    <section class="panel">
+        <h2>Return Requests</h2>
+        {% for item in pending_returns %}<div class="request"><span>{{ item[1] }} · {{ item[2] }} · ID: {{ item[3] }} ·
+                qty {{ item[4] }}</span><span>
+                <form method="post" action="{{ url_for('approve_return', request_id=item[0], action='approve') }}">
+                    <button>Approve</button>
+                </form>
+                <form method="post" action="{{ url_for('approve_return', request_id=item[0], action='reject') }}">
+                    <button class="danger">Reject</button>
+                </form>
+            </span></div>{% else %}<p>Nothing waiting for approval.</p>{% endfor %}
+    </section>
+</section>
+<section class="panel">
+    <h2>Password Reset Requests</h2>
+    {% for item in reset_requests %}<div class="request"><span>{{ item[1] }} · {{ item[2] }}</span><span>
+            <form method="post" action="{{ url_for('process_reset', request_id=item[0], action='approve') }}">
+                <button>Approve</button>
+            </form>
+            <form method="post" action="{{ url_for('process_reset', request_id=item[0], action='reject') }}"><button
+                    class="danger">Reject</button></form>
+        </span></div>{% else %}<p>Nothing waiting for approval.</p>{% endfor %}
+</section>
+<section class="panel">
+    <h2>Active Borrowed Items</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Student</th>
+                <th>Student ID</th>
+                <th>Quantity</th>
+                <th>Checked out</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for loan in borrowed %}<tr>
+                <td>{{ loan[1] }}</td>
+                <td>{{ loan[3] }}</td>
+                <td>{{ loan[4] }}</td>
+                <td>{{ loan[5] }}</td>
+                <td>{{ loan[6] }}</td>
+            </tr>{% else %}<tr>
+                <td colspan="5">No active borrowed items.</td>
+            </tr>{% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

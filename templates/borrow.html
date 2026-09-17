@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading">
+    <p class="eyebrow">Student area</p>
+    <h1>Borrow Hardware</h1>
+    <p class="page-summary">Request equipment and track your active loans.</p>
+</div>
+<section class="panel">
+    <h2>Request Items</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Category</th>
+                <th>Quantity</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row[1] }}</td>
+                <td>{{ row[2] }}</td>
+                <td>{{ row[3] }}</td>
+                <td><span class="status status-{{ row[5]|lower|replace(' ', '-') }}">{{ row[5] }}</span></td>
+                <td>
+                    <form class="inline-form borrow-form" method="post" action="{{ url_for('borrow') }}"><input
+                            type="hidden" name="item_id" value="{{ row[0] }}"><input name="student_id"
+                            value="{{ student_id }}" placeholder="Student ID" aria-label="Student ID for {{ row[1] }}"
+                            required><input name="quantity" type="number" min="1" max="{{ row[3] }}" value="1" required
+                            aria-label="Quantity for {{ row[1] }}">
+                        <button{% if row[3] <=0 %} disabled{% endif %}>Request borrow</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5">No hardware has been added.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+<section class="panel">
+    <h2>My Borrowed Items</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Category</th>
+                <th>Quantity</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for loan in borrowed %}
+            <tr>
+                <td>{{ loan[1] }}</td>
+                <td>{{ loan[2] }}</td>
+                <td>{{ loan[5] }}</td>
+                <td><span class="status">Active</span></td>
+                <td>
+                    <form class="inline-form" method="post" action="{{ url_for('request_return', item_id=loan[0]) }}">
+                        <input name="quantity" type="number" min="1" max="{{ loan[5] }}" value="{{ loan[5] }}" required
+                            aria-label="Return quantity for {{ loan[1] }}">
+                        <button class="secondary">Request return</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5">No active borrowed items.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
