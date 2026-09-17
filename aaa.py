@@ -1,0 +1,249 @@
+from models.database import init_db
+from controllers.hardware_controller import HardwareController
+from controllers.auth_controller import AuthController
+from flask import Flask, flash, redirect, render_template, request, session, url_for
+from pathlib import Path
+from functools import wraps
+import os
+import sqlite3
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = str(BASE_DIR / "hardware_inventory.db")
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "lab7-development-secret")
+init_db(DB_PATH)
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if "username" not in session:
+            flash("Please log in first.", "warning")
+            return redirect(url_for("login"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get("role") != "ADMIN":
+            flash("Administrator access required.", "danger")
+            return redirect(url_for("dashboard"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def controllers():
+    return AuthController(DB_PATH), HardwareController(DB_PATH)
+
+
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        auth, _ = controllers()
+        ok, message, user = auth.login_user(request.form.get(
+            "username", ""), request.form.get("password", ""))
+        if ok:
+            session.clear()
+            session.update(
+                username=user["username"], email=user["email"], role=user["role"].upper())
+            return redirect(url_for("dashboard"))
+        flash(message, "danger")
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        auth, _ = controllers()
+        ok, message = auth.register_user(request.form.get("username", ""), request.form.get(
+            "email", ""), request.form.get("password", ""), request.form.get("role", "USER"))
+        flash(message, "success" if ok else "danger")
+        if ok:
+            return redirect(url_for("login"))
+    return render_template("register.html")
+
+
+@app.route("/reset", methods=["GET", "POST"])
+def reset():
+    if request.method == "POST":
+        auth, _ = controllers()
+        password = request.form.get("password", "")
+        if password != request.form.get("confirm_password", ""):
+            flash("Passwords do not match.", "danger")
+        else:
+            ok, message = auth.request_password_reset(request.form.get(
+                "username", ""), request.form.get("email", ""), password)
+            flash(message, "success" if ok else "danger")
+            if ok:
+                return redirect(url_for("login"))
+    return render_template("reset.html")
+
+
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    if session["role"] != "ADMIN":
+        return redirect(url_for("catalog"))
+    return redirect(url_for("admin_catalog"))
+
+
+@app.route("/admin/catalog")
+@admin_required
+def admin_catalog():
+    _, hardware = controllers()
+    search_term = request.args.get("q", "").strip()
+    return render_template(
+        "admin_catalog.html",
+        rows=hardware.fetch_all_records(search_term),
+        search_term=search_term,
+        total_stocks=hardware.get_total_stocks(),
+    )
+
+
+@app.route("/admin/requests")
+@admin_required
+def admin_requests():
+    auth, hardware = controllers()
+    return render_template(
+        "admin_requests.html",
+        borrowed=hardware.get_borrowed_items(),
+        pending_borrows=hardware.get_pending_borrow_requests(),
+        pending_returns=hardware.get_pending_return_requests(),
+        reset_requests=auth.fetch_pending_reset_requests(),
+    )
+
+
+@app.route("/catalog")
+@login_required
+def catalog():
+    _, hardware = controllers()
+    search_term = request.args.get("q", "").strip()
+    return render_template(
+        "catalog.html",
+        rows=hardware.fetch_all_records(search_term),
+        search_term=search_term,
+        total_stocks=hardware.get_total_stocks(),
+    )
+
+
+@app.route("/borrow-page")
+@login_required
+def borrow_page():
+    _, hardware = controllers()
+    borrowed = hardware.get_borrowed_items(
+        student_name=session["username"])
+    return render_template(
+        "borrow.html",
+        rows=hardware.fetch_all_records(),
+        borrowed=borrowed,
+        student_id=session.get("student_id", ""),
+    )
+
+
+@app.route("/history")
+@login_required
+def history_page():
+    _, hardware = controllers()
+    is_admin = session.get("role") == "ADMIN"
+    history = hardware.get_history_records(
+        student_name=session["username"] if not is_admin else None)
+    return render_template(
+        "history.html",
+        history=history,
+        is_admin=is_admin,
+    )
+
+
+@app.post("/borrow")
+@login_required
+def borrow():
+    _, hardware = controllers()
+    student_id = request.form.get("student_id", "").strip()
+    ok, message = hardware.request_borrow(request.form.get(
+        "item_id"), student_id, request.form.get("quantity"), session["username"])
+    if ok:
+        session["student_id"] = student_id
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("borrow_page"))
+
+
+@app.post("/return/<int:item_id>")
+@login_required
+def request_return(item_id):
+    _, hardware = controllers()
+    student_id = session.get("student_id", session["username"])
+    ok, message = hardware.request_return_quantity(
+        item_id,
+        student_id,
+        session["username"],
+        request.form.get("quantity"),
+    )
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("borrow_page"))
+
+
+@app.post("/admin/add")
+@admin_required
+def add_hardware():
+    _, hardware = controllers()
+    ok, message = hardware.add_hardware(request.form.get("item_name", "").strip(), request.form.get(
+        "category", "").strip(), request.form.get("quantity", ""), request.form.get("unit_price", ""))
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin_catalog"))
+
+
+@app.post("/admin/update/<int:item_id>")
+@admin_required
+def update_hardware(item_id):
+    _, hardware = controllers()
+    ok, message = hardware.update_hardware(
+        item_id,
+        request.form.get("quantity", ""),
+        request.form.get("unit_price", ""),
+    )
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin_catalog"))
+
+
+@app.post("/admin/borrow/<int:request_id>/<action>")
+@admin_required
+def approve_borrow(request_id, action):
+    _, hardware = controllers()
+    ok, message = hardware.approve_borrow_request(
+        request_id, action == "approve")
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin_requests"))
+
+
+@app.post("/admin/return/<int:request_id>/<action>")
+@admin_required
+def approve_return(request_id, action):
+    _, hardware = controllers()
+    ok, message = hardware.approve_return_request(
+        request_id, action == "approve")
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin_requests"))
+
+
+@app.post("/admin/reset/<int:request_id>/<action>")
+@admin_required
+def process_reset(request_id, action):
+    auth, _ = controllers()
+    ok, message = auth.process_reset_request(request_id, action == "approve")
+    flash(message, "success" if ok else "danger")
+    return redirect(url_for("admin_requests"))
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
