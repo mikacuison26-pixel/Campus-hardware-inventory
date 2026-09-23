@@ -487,12 +487,16 @@ class HardwareController:
                     "SELECT status, student_id, student_name FROM asset_loans WHERE loan_id = ?", (loan_id,)).fetchone()
                 if not loan or loan[0] != 'Active' or loan[2] != student_name:
                     return False, "Active borrowed item not found."
+                loan_student_id = (loan[1] or "").strip()
+                if not loan_student_id or loan_student_id.upper() == "EMPTY":
+                    return False, "Student ID is missing from this loan. Please contact an administrator."
                 existing = conn.execute(
                     "SELECT 1 FROM return_requests WHERE loan_id = ? AND status = 'Pending'", (loan_id,)).fetchone()
                 if existing:
                     return False, "A return request is already pending."
                 conn.execute(
-                    "INSERT INTO return_requests (loan_id, student_id) VALUES (?, ?)", (loan_id, student_id))
+                    "INSERT INTO return_requests (loan_id, student_id) VALUES (?, ?)",
+                    (loan_id, loan_student_id))
             return True, "Return request submitted for approval."
         except sqlite3.Error as e:
             return False, f"Return request failed: {e}"
@@ -509,7 +513,7 @@ class HardwareController:
                     with pg_conn.cursor() as cursor:
                         cursor.execute(
                             """
-                            SELECT l.loan_id
+                            SELECT l.loan_id, l.student_id
                             FROM asset_loans l
                             WHERE l.item_id = %s AND l.student_name = %s
                               AND l.status = 'Active'
@@ -539,6 +543,8 @@ class HardwareController:
                             loan for loan in active_loans
                             if loan[0] not in pending_loan_ids
                         ][:missing_quantity]
+                        if any(not (loan[1] or "").strip() or loan[1].strip().upper() == "EMPTY" for loan in loans):
+                            return False, "Student ID is missing from one or more loans. Please contact an administrator."
                         cursor.execute(
                             "SELECT COALESCE(MAX(request_id), 0) FROM return_requests"
                         )
@@ -550,7 +556,7 @@ class HardwareController:
                             VALUES (%s, %s, %s, 'Pending')
                             """,
                             [
-                                (next_request_id + offset, loan[0], student_id)
+                                (next_request_id + offset, loan[0], loan[1].strip())
                                 for offset, loan in enumerate(loans)
                             ],
                         )
@@ -561,7 +567,7 @@ class HardwareController:
 
             with sqlite3.connect(self.db_name) as conn:
                 loans = conn.execute("""
-                    SELECT l.loan_id
+                    SELECT l.loan_id, l.student_id
                     FROM asset_loans l
                     WHERE l.item_id = ? AND l.student_name = ? AND l.status = 'Active'
                     ORDER BY l.loan_id ASC
@@ -586,9 +592,11 @@ class HardwareController:
                 loans = [
                     loan for loan in loans if loan[0] not in pending_loan_ids
                 ][:missing_quantity]
+                if any(not (loan[1] or "").strip() or loan[1].strip().upper() == "EMPTY" for loan in loans):
+                    return False, "Student ID is missing from one or more loans. Please contact an administrator."
                 conn.executemany(
                     "INSERT INTO return_requests (loan_id, student_id) VALUES (?, ?)",
-                    [(loan[0], student_id) for loan in loans],
+                    [(loan[0], loan[1].strip()) for loan in loans],
                 )
             return True, f"Return request submitted for {quantity} item(s)."
         except (ValueError, sqlite3.Error) as e:
