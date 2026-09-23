@@ -8,7 +8,7 @@ from functools import wraps
 from datetime import datetime
 from urllib.parse import urlparse
 import os
-import psycopg2
+import psycopg
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -71,7 +71,7 @@ def db_check():
     try:
         parsed = urlparse(DATABASE_URL)
 
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg.connect(DATABASE_URL)
         cur = conn.cursor()
 
         # Count users in the PostgreSQL database
