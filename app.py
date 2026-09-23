@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from functools import wraps
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 import os
 import psycopg
@@ -31,8 +32,13 @@ def format_localtime(value):
     if not value:
         return ""
     if isinstance(value, str):
-        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if value.tzinfo is not None:
+        value = value.astimezone(ZoneInfo("Asia/Manila"))
+    return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def login_required(view):
@@ -284,7 +290,7 @@ def borrow():
     )
 
     if ok:
-        session["student_id"] = session["username"]
+        session["student_id"] = student_id
 
     flash(message, "success" if ok else "danger")
 

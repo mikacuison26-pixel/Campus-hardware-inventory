@@ -15,12 +15,13 @@
             <tr>
                 <th>Item</th>
                 <th>Category</th>
-                {% if is_admin %}<th>Student</th>{% endif %}
+                {% if is_admin %}<th>Student Name</th>{% endif %}
                 <th>Student ID</th>
                 <th>Quantity</th>
                 <th>Status</th>
-                <th>Checked out</th>
-                <th>Returned</th>
+                <th>Created At</th>
+                <th>Checkout Time</th>
+                <th>Return Time</th>
             </tr>
         </thead>
         <tbody>
@@ -32,12 +33,13 @@
                 <td>{{ row[3] }}</td>
                 <td>{{ row[4] }}</td>
                 <td><span class="status status-{{ row[5]|lower|replace(' ', '-') }}">{{ row[5] }}</span></td>
-                <td>{{ row[6]|localtime }}</td>
-                <td>{{ row[7]|localtime if row[7] else 'Not returned' }}</td>
+                <td>{{ row[6]|localtime if row[6] else '—' }}</td>
+                <td>{{ row[7]|localtime if row[7] else '—' }}</td>
+                <td>{{ row[8]|localtime if row[8] else '—' }}</td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="{{ 8 if is_admin else 7 }}">No borrowing history found.</td>
+                <td colspan="{{ 9 if is_admin else 8 }}">No borrowing history found.</td>
             </tr>
             {% endfor %}
         </tbody>

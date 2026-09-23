@@ -204,10 +204,8 @@ class HardwareController:
                 query = """
                     SELECT h.item_name, h.category,
                         l.student_name, l.student_id,
-                        COUNT(*) AS quantity,
-                        l.status,
-                        MIN(l.checkout_time) AS checkout_time,
-                        MAX(l.return_time) AS return_time
+                        1 AS quantity, l.status,
+                        l.created_at, l.checkout_time, l.return_time
                     FROM asset_loans l
                     JOIN hardware h ON h.item_id = l.item_id
                     WHERE TRUE
@@ -216,7 +214,7 @@ class HardwareController:
                 if student_name:
                     query += " AND l.student_name = %s"
                     params.append(student_name)
-                query += " GROUP BY h.item_name, h.category, l.student_name, l.student_id, l.status ORDER BY MAX(l.loan_id) DESC"
+                query += " ORDER BY l.loan_id DESC"
                 with pg_conn.cursor() as cursor:
                     cursor.execute(query, params)
                     return cursor.fetchall()
@@ -230,10 +228,8 @@ class HardwareController:
                 query = """
                     SELECT h.item_name, h.category,
                         l.student_name, l.student_id,
-                        COUNT(*) AS quantity,
-                        l.status,
-                        MIN(l.checkout_time) AS checkout_time,
-                        MAX(l.return_time) AS return_time
+                        1 AS quantity, l.status,
+                        l.created_at, l.checkout_time, l.return_time
                     FROM asset_loans l
                     JOIN hardware h ON h.item_id = l.item_id
                     WHERE 1 = 1
@@ -242,7 +238,7 @@ class HardwareController:
                 if student_name:
                     query += " AND l.student_name = ?"
                     params.append(student_name)
-                query += " GROUP BY h.item_name, h.category, l.student_name, l.student_id, l.status ORDER BY MAX(l.loan_id) DESC"
+                query += " ORDER BY l.loan_id DESC"
                 return conn.execute(query, params).fetchall()
         except sqlite3.Error as e:
             logger.error(f"Error fetching loan history: {e}")
@@ -374,8 +370,11 @@ class HardwareController:
                 """, (item_id,)).fetchone()[0]
                 if quantity + pending > item[0]:
                     return False, "Requested quantity exceeds available stock."
-                conn.execute("INSERT INTO borrow_requests (item_id, student_id, student_name, quantity) VALUES (?, ?, ?, ?)",
-                             (item_id, student_id, student_name, quantity))
+                conn.execute("""
+                    INSERT INTO borrow_requests
+                        (item_id, student_id, student_name, quantity, created_at)
+                    VALUES (?, ?, ?, ?, datetime('now', '+8 hours'))
+                """, (item_id, student_id, student_name, quantity))
             return True, "Borrow request submitted for approval."
         except (ValueError, sqlite3.Error, psycopg.Error) as e:
             logger.error(f"Borrow request failed: {e}")
@@ -387,13 +386,18 @@ class HardwareController:
             try:
                 with pg_conn.cursor() as cursor:
                     cursor.execute(
-                        "SELECT item_id, student_id, student_name, quantity, status FROM borrow_requests WHERE request_id = %s FOR UPDATE",
+                        """
+                        SELECT item_id, student_id, student_name, quantity, status, created_at
+                        FROM borrow_requests
+                        WHERE request_id = %s
+                        FOR UPDATE
+                        """,
                         (request_id,),
                     )
                     row = cursor.fetchone()
                     if not row:
                         return False, "Borrow request not found."
-                    item_id, student_id, student_name, quantity, status = row
+                    item_id, student_id, student_name, quantity, status, request_created_at = row
                     if status != "Pending":
                         return False, "Borrow request has already been processed."
                     if approve:
@@ -419,12 +423,17 @@ class HardwareController:
                         cursor.executemany(
                             """
                             INSERT INTO asset_loans
-                                (loan_id, item_id, student_id, student_name, status)
-                            VALUES (%s, %s, %s, %s, 'Active')
+                                (loan_id, item_id, student_id, student_name,
+                                 created_at, checkout_time, return_time, status)
+                            VALUES (
+                                %s, %s, %s, %s, %s,
+                                CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila',
+                                NULL, 'Active'
+                            )
                             """,
                             [
                                 (next_loan_id + offset, item_id,
-                                 student_id, student_name)
+                                 student_id, student_name, request_created_at)
                                 for offset in range(quantity)
                             ],
                         )
@@ -442,10 +451,10 @@ class HardwareController:
         try:
             with sqlite3.connect(self.db_name) as conn:
                 row = conn.execute(
-                    "SELECT item_id, student_id, student_name, quantity, status FROM borrow_requests WHERE request_id = ?", (request_id,)).fetchone()
+                    "SELECT item_id, student_id, student_name, quantity, status, created_at FROM borrow_requests WHERE request_id = ?", (request_id,)).fetchone()
                 if not row:
                     return False, "Borrow request not found."
-                item_id, student_id, student_name, quantity, status = row
+                item_id, student_id, student_name, quantity, status, request_created_at = row
                 if status != "Pending":
                     return False, "Borrow request has already been processed."
                 if approve:
@@ -457,7 +466,14 @@ class HardwareController:
                                  (quantity, quantity, quantity, item_id))
                     for _ in range(quantity):
                         conn.execute(
-                            "INSERT INTO asset_loans (item_id, student_id, student_name, status) VALUES (?, ?, ?, 'Active')", (item_id, student_id, student_name,))
+                            """
+                            INSERT INTO asset_loans
+                                (item_id, student_id, student_name, created_at,
+                                 checkout_time, return_time, status)
+                            VALUES (?, ?, ?, ?, datetime('now', '+8 hours'), NULL, 'Active')
+                            """,
+                            (item_id, student_id, student_name, request_created_at),
+                        )
                 conn.execute("UPDATE borrow_requests SET status = ? WHERE request_id = ?",
                              ('Approved' if approve else 'Rejected', request_id))
             return True, f"Borrow request {'approved' if approve else 'rejected'}."
@@ -663,7 +679,7 @@ class HardwareController:
                     if active_count != len(loan_ids):
                         return False, "Borrowed item is unavailable."
                     conn.execute(
-                        "UPDATE asset_loans SET status = 'Returned', return_time = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') WHERE loan_id IN ({})".format(
+                        "UPDATE asset_loans SET status = 'Returned', return_time = datetime('now', '+8 hours') WHERE loan_id IN ({})".format(
                             ','.join('?' for _ in loan_ids)), loan_ids)
                     conn.execute(
                         "UPDATE hardware SET quantity = quantity + ?, status = CASE WHEN quantity + ? <= 0 THEN 'Out of Stock' WHEN quantity + ? < 10 THEN 'Low Stock' ELSE 'In Stock' END WHERE item_id = ?",
@@ -810,8 +826,9 @@ class HardwareController:
             """, (new_qty, new_status, item_id))
 
             cursor.execute("""
-                INSERT INTO asset_loans (item_id, student_id, status)
-                VALUES (?, ?, 'Active')
+                INSERT INTO asset_loans
+                    (item_id, student_id, created_at, checkout_time, return_time, status)
+                VALUES (?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), NULL, 'Active')
             """, (item_id, student_id.strip()))
 
             conn.commit()
@@ -827,8 +844,12 @@ class HardwareController:
                         with pg.cursor() as cur:
                             cur.execute(
                                 """
-                                INSERT INTO asset_loans (item_id, student_id, status)
-                                VALUES (%s, %s, 'Active')
+                                INSERT INTO asset_loans
+                                    (item_id, student_id, created_at, checkout_time, return_time, status)
+                                VALUES (%s, %s,
+                                    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila',
+                                    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila',
+                                    NULL, 'Active')
                                 ON CONFLICT DO NOTHING
                                 """,
                                 (item_id, student_id.strip()),
@@ -870,7 +891,7 @@ class HardwareController:
 
             cursor.execute("""
                 UPDATE asset_loans 
-                SET status = 'Returned', return_time = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
+                SET status = 'Returned', return_time = datetime('now', '+8 hours')
                 WHERE loan_id = (
                     SELECT loan_id FROM asset_loans 
                     WHERE item_id = ? AND status = 'Active' 

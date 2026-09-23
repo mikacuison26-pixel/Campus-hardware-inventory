@@ -62,7 +62,8 @@ def init_db(db_name="hardware_inventory.db"):
                 item_id INTEGER REFERENCES hardware(item_id),
                 student_id TEXT NOT NULL,
                 student_name TEXT,
-                checkout_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours')),
+                checkout_time TIMESTAMP,
                 return_time TIMESTAMP,
                 status TEXT DEFAULT 'Active'
             )
@@ -89,7 +90,7 @@ def init_db(db_name="hardware_inventory.db"):
                 student_name TEXT,
                 quantity INTEGER NOT NULL CHECK (quantity > 0),
                 status TEXT NOT NULL DEFAULT 'Pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
             )
         """)
 
@@ -99,9 +100,16 @@ def init_db(db_name="hardware_inventory.db"):
                 loan_id INTEGER REFERENCES asset_loans(loan_id),
                 student_id TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'Pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (datetime('now', '+8 hours'))
             )
         """)
+
+        cursor.execute("PRAGMA table_info(asset_loans)")
+        loan_columns = [col[1] for col in cursor.fetchall()]
+        if 'created_at' not in loan_columns:
+            cursor.execute("ALTER TABLE asset_loans ADD COLUMN created_at TIMESTAMP")
+            cursor.execute(
+                "UPDATE asset_loans SET created_at = checkout_time WHERE created_at IS NULL")
 
         # Auto-migration: Check and add missing columns to 'reservations' if database exists
         cursor.execute("PRAGMA table_info(reservations)")
