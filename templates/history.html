@@ -19,7 +19,8 @@
                 <th>Student ID</th>
                 <th>Quantity</th>
                 <th>Status</th>
-                <th>Last update</th>
+                <th>Checked out</th>
+                <th>Returned</th>
             </tr>
         </thead>
         <tbody>
@@ -31,11 +32,12 @@
                 <td>{{ row[3] }}</td>
                 <td>{{ row[4] }}</td>
                 <td><span class="status status-{{ row[5]|lower|replace(' ', '-') }}">{{ row[5] }}</span></td>
-                <td>{{ row[7] }}</td>
+                <td>{{ row[6]|localtime }}</td>
+                <td>{{ row[7]|localtime if row[7] else 'Not returned' }}</td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="{{ 7 if is_admin else 6 }}">No borrowing history found.</td>
+                <td colspan="{{ 8 if is_admin else 7 }}">No borrowing history found.</td>
             </tr>
             {% endfor %}
         </tbody>

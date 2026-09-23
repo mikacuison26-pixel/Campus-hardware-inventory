@@ -8,7 +8,8 @@
 <section class="split">
     <section class="panel">
         <h2>Borrow Requests</h2>
-        {% for item in pending_borrows %}<div class="request"><span>{{ item[1] }} · {{ item[2] }} · ID: {{ item[3] }} ·
+        {% for item in pending_borrows %}<div class="request"><span>{{ item[1] }} · Student: {{ item[2] }} · Student ID:
+                {{ item[3] }} ·
                 qty {{ item[4] }}</span><span>
                 <form method="post" action="{{ url_for('approve_borrow', request_id=item[0], action='approve') }}">
                     <button>Approve</button>
@@ -20,7 +21,8 @@
     </section>
     <section class="panel">
         <h2>Return Requests</h2>
-        {% for item in pending_returns %}<div class="request"><span>{{ item[1] }} · {{ item[2] }} · ID: {{ item[3] }} ·
+        {% for item in pending_returns %}<div class="request"><span>{{ item[1] }} · Student: {{ item[2] }} · Student ID:
+                {{ item[3] }} ·
                 qty {{ item[4] }}</span><span>
                 <form method="post" action="{{ url_for('approve_return', request_id=item[0], action='approve') }}">
                     <button>Approve</button>
@@ -33,7 +35,7 @@
 </section>
 <section class="panel">
     <h2>Password Reset Requests</h2>
-    {% for item in reset_requests %}<div class="request"><span>{{ item[1] }} · {{ item[2] }}</span><span>
+    {% for item in reset_requests %}<div class="request"><span>Student: {{ item[1] }} · {{ item[2] }}</span><span>
             <form method="post" action="{{ url_for('process_reset', request_id=item[0], action='approve') }}">
                 <button>Approve</button>
             </form>
@@ -59,7 +61,7 @@
                 <td>{{ loan[3] }}</td>
                 <td>{{ loan[4] }}</td>
                 <td>{{ loan[5] }}</td>
-                <td>{{ loan[6] }}</td>
+                <td>{{ loan[6]|localtime }}</td>
             </tr>{% else %}<tr>
                 <td colspan="5">No active borrowed items.</td>
             </tr>{% endfor %}

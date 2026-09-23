@@ -3,5 +3,5 @@ bcrypt
 pydantic
 email-validator
 python-dotenv
-psycopg2-binary
+psycopg[binary]>=3.2,<4
 gunicorn==23.0.0

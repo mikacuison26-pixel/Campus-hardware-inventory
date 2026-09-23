@@ -1,12 +1,20 @@
 from logger import logger
 import sqlite3
 import sys
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 def init_db(db_name="hardware_inventory.db"):
+    if os.getenv("DATABASE_URL"):
+        logger.info(
+            "PostgreSQL live database detected; skipping SQLite schema bootstrap.")
+        return
+
     try:
         conn = sqlite3.connect(db_name)
         cursor = conn.cursor()

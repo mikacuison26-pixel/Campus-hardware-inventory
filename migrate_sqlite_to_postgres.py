@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 PROJECT_DIR = Path(__file__).resolve().parent
 load_dotenv(PROJECT_DIR / ".env")
 
-SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(PROJECT_DIR / "hardware_inventory.db"))
+SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(
+    PROJECT_DIR / "hardware_inventory.db"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 TABLES = [
@@ -109,17 +110,20 @@ def migrate_table(sqlite_conn: sqlite3.Connection, pg_conn, table: str):
         create_table_in_postgres(cur, table, columns)
 
         column_names = [col["name"] for col in columns]
-        quoted_names = ', '.join(f'"{name}"' for name in column_names)
-        placeholders = ', '.join(['%s'] * len(column_names))
+        primary_keys = [col["name"] for col in columns if col["pk"]]
 
         sqlite_rows = sqlite_conn.execute(
             f'SELECT * FROM "{table}"').fetchall()
         if sqlite_rows:
-            insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+            insert_sql = sql.SQL(
+                "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO NOTHING"
+            ).format(
                 sql.Identifier(table),
                 sql.SQL(', ').join(sql.Identifier(name)
                                    for name in column_names),
                 sql.SQL(', ').join(sql.Placeholder() for _ in column_names),
+                sql.SQL(', ').join(sql.Identifier(name)
+                                   for name in primary_keys) if primary_keys else sql.SQL(''),
             )
             cur.executemany(insert_sql, sqlite_rows)
 
