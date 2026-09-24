@@ -198,322 +198,400 @@ class HardwareController:
             return []
 
 
-    def get_history_records(self, student_name=None):
-        """
-        Returns borrowing history including:
+def get_history_records(self, student_name=None):
+    """
+    Returns complete history:
 
-        - Active loans
-        - Returned loans
-        - Rejected borrow requests
-        - Rejected return requests
+    NORMAL LOANS
+    - Active
+    - Returned
 
-        Existing loan history is loaded first so rejected-request
-        queries cannot make the normal history disappear.
-        """
+    REJECTED REQUESTS
+    - Rejected borrow requests
+    - Rejected return requests
 
-        pg_conn = get_postgres_connection()
+    Because asset_loans does not contain created_at,
+    checkout_time is used as Created At for normal loans.
+    """
 
-        # =========================================================
-        # POSTGRESQL / SUPABASE
-        # =========================================================
-        if pg_conn is not None:
-            try:
-                history = []
+    pg_conn = get_postgres_connection()
 
-                # -------------------------------------------------
-                # 1. EXISTING NORMAL HISTORY
-                #    Active + Returned
-                # -------------------------------------------------
-                loan_query = """
-                    SELECT
-                        h.item_name,
-                        h.category,
-                        l.student_name,
-                        l.student_id,
-                        1 AS quantity,
-                        l.status,
-                        l.created_at,
-                        l.checkout_time,
-                        l.return_time
-                    FROM asset_loans l
-                    JOIN hardware h
-                        ON h.item_id = l.item_id
-                    WHERE 1 = 1
-                """
+    # =========================================================
+    # POSTGRESQL / SUPABASE
+    # =========================================================
+    if pg_conn is not None:
+        try:
+            history = []
 
-                loan_params = []
+            # =================================================
+            # 1. NORMAL LOAN HISTORY
+            # =================================================
+            loan_query = """
+                SELECT
+                    h.item_name,
+                    h.category,
+                    l.student_name,
+                    l.student_id,
+                    1 AS quantity,
+                    l.status,
 
-                if student_name:
-                    loan_query += """
-                        AND l.student_name = %s
-                    """
-                    loan_params.append(student_name)
+                    -- asset_loans has no created_at,
+                    -- so checkout_time is the loan creation time
+                    l.checkout_time AS created_at,
 
+                    l.checkout_time,
+                    l.return_time
+
+                FROM asset_loans l
+
+                JOIN hardware h
+                    ON h.item_id = l.item_id
+
+                WHERE 1 = 1
+            """
+
+            loan_params = []
+
+            if student_name:
                 loan_query += """
-                    ORDER BY l.created_at DESC NULLS LAST
+                    AND l.student_name = %s
                 """
+                loan_params.append(student_name)
 
+            loan_query += """
+                ORDER BY l.checkout_time DESC NULLS LAST
+            """
+
+            with pg_conn.cursor() as cursor:
+                cursor.execute(loan_query, loan_params)
+                history.extend(cursor.fetchall())
+
+            # =================================================
+            # 2. REJECTED BORROW REQUESTS
+            # =================================================
+            rejected_borrow_query = """
+                SELECT
+                    h.item_name,
+                    h.category,
+                    b.student_name,
+                    b.student_id,
+                    b.quantity,
+
+                    'Rejected' AS status,
+
+                    b.created_at,
+
+                    NULL AS checkout_time,
+                    NULL AS return_time
+
+                FROM borrow_requests b
+
+                JOIN hardware h
+                    ON h.item_id = b.item_id
+
+                WHERE LOWER(TRIM(b.status)) = 'rejected'
+            """
+
+            rejected_borrow_params = []
+
+            if student_name:
+                rejected_borrow_query += """
+                    AND b.student_name = %s
+                """
+                rejected_borrow_params.append(student_name)
+
+            rejected_borrow_query += """
+                ORDER BY b.created_at DESC NULLS LAST
+            """
+
+            try:
                 with pg_conn.cursor() as cursor:
-                    cursor.execute(loan_query, loan_params)
+                    cursor.execute(
+                        rejected_borrow_query,
+                        rejected_borrow_params
+                    )
                     history.extend(cursor.fetchall())
-
-                # -------------------------------------------------
-                # 2. REJECTED BORROW REQUESTS
-                # -------------------------------------------------
-                try:
-                    rejected_borrow_query = """
-                        SELECT
-                            h.item_name,
-                            h.category,
-                            b.student_name,
-                            b.student_id,
-                            b.quantity,
-                            'Rejected' AS status,
-                            b.created_at,
-                            NULL AS checkout_time,
-                            NULL AS return_time
-                        FROM borrow_requests b
-                        JOIN hardware h
-                            ON h.item_id = b.item_id
-                        WHERE LOWER(TRIM(b.status)) = 'rejected'
-                    """
-
-                    rejected_borrow_params = []
-
-                    if student_name:
-                        rejected_borrow_query += """
-                            AND b.student_name = %s
-                        """
-                        rejected_borrow_params.append(student_name)
-
-                    rejected_borrow_query += """
-                        ORDER BY b.created_at DESC NULLS LAST
-                    """
-
-                    with pg_conn.cursor() as cursor:
-                        cursor.execute(
-                            rejected_borrow_query,
-                            rejected_borrow_params
-                        )
-                        history.extend(cursor.fetchall())
-
-                except Exception as e:
-                    logger.error(
-                        f"Error fetching rejected borrow history: {e}"
-                    )
-
-                # -------------------------------------------------
-                # 3. REJECTED RETURN REQUESTS
-                # -------------------------------------------------
-                try:
-                    rejected_return_query = """
-                        SELECT
-                            h.item_name,
-                            h.category,
-                            l.student_name,
-                            l.student_id,
-                            1 AS quantity,
-                            'Rejected' AS status,
-                            l.created_at,
-                            l.checkout_time,
-                            NULL AS return_time
-                        FROM return_requests r
-                        JOIN asset_loans l
-                            ON l.loan_id = r.loan_id
-                        JOIN hardware h
-                            ON h.item_id = l.item_id
-                        WHERE LOWER(TRIM(r.status)) = 'rejected'
-                    """
-
-                    rejected_return_params = []
-
-                    if student_name:
-                        rejected_return_query += """
-                            AND l.student_name = %s
-                        """
-                        rejected_return_params.append(student_name)
-
-                    rejected_return_query += """
-                        ORDER BY l.created_at DESC NULLS LAST
-                    """
-
-                    with pg_conn.cursor() as cursor:
-                        cursor.execute(
-                            rejected_return_query,
-                            rejected_return_params
-                        )
-                        history.extend(cursor.fetchall())
-
-                except Exception as e:
-                    logger.error(
-                        f"Error fetching rejected return history: {e}"
-                    )
-
-                # -------------------------------------------------
-                # 4. SORT EVERYTHING TOGETHER
-                # -------------------------------------------------
-                history.sort(
-                    key=lambda row: row[6] if row[6] is not None else "",
-                    reverse=True
-                )
-
-                logger.info(
-                    f"History loaded: {len(history)} records"
-                )
-
-                return history
 
             except Exception as e:
                 logger.error(
-                    f"Error fetching loan history: {e}"
+                    f"Error fetching rejected borrow history: {e}"
                 )
-                return []
 
-            finally:
-                pg_conn.close()
+            # =================================================
+            # 3. REJECTED RETURN REQUESTS
+            # =================================================
+            rejected_return_query = """
+                SELECT
+                    h.item_name,
+                    h.category,
+                    l.student_name,
+                    l.student_id,
+                    1 AS quantity,
 
-        # =========================================================
-        # SQLITE FALLBACK
-        # =========================================================
-        try:
-            with sqlite3.connect(self.db_name) as conn:
+                    'Rejected' AS status,
 
-                history = []
+                    r.created_at,
 
-                # -------------------------------------------------
-                # 1. EXISTING NORMAL HISTORY
-                # -------------------------------------------------
-                loan_query = """
-                    SELECT
-                        h.item_name,
-                        h.category,
-                        l.student_name,
-                        l.student_id,
-                        1 AS quantity,
-                        l.status,
-                        l.created_at,
-                        l.checkout_time,
-                        l.return_time
-                    FROM asset_loans l
-                    JOIN hardware h
-                        ON h.item_id = l.item_id
-                    WHERE 1 = 1
+                    l.checkout_time,
+                    NULL AS return_time
+
+                FROM return_requests r
+
+                JOIN asset_loans l
+                    ON l.loan_id = r.loan_id
+
+                JOIN hardware h
+                    ON h.item_id = l.item_id
+
+                WHERE LOWER(TRIM(r.status)) = 'rejected'
+            """
+
+            rejected_return_params = []
+
+            if student_name:
+                rejected_return_query += """
+                    AND l.student_name = %s
                 """
+                rejected_return_params.append(student_name)
 
-                loan_params = []
+            rejected_return_query += """
+                ORDER BY r.created_at DESC NULLS LAST
+            """
 
-                if student_name:
-                    loan_query += """
-                        AND l.student_name = ?
-                    """
-                    loan_params.append(student_name)
+            try:
+                with pg_conn.cursor() as cursor:
+                    cursor.execute(
+                        rejected_return_query,
+                        rejected_return_params
+                    )
+                    history.extend(cursor.fetchall())
 
+            except Exception as e:
+                logger.error(
+                    f"Error fetching rejected return history: {e}"
+                )
+
+            # =================================================
+            # 4. SORT ALL HISTORY
+            # =================================================
+            history.sort(
+                key=lambda row: row[6] if row[6] is not None else "",
+                reverse=True
+            )
+
+            logger.info(
+                f"History loaded successfully: {len(history)} records"
+            )
+
+            return history
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching history from PostgreSQL: {e}"
+            )
+            return []
+
+        finally:
+            pg_conn.close()
+
+    # =========================================================
+    # SQLITE FALLBACK
+    # =========================================================
+    try:
+        with sqlite3.connect(self.db_name) as conn:
+
+            history = []
+
+            # =================================================
+            # 1. NORMAL LOAN HISTORY
+            # =================================================
+            loan_query = """
+                SELECT
+                    h.item_name,
+                    h.category,
+                    l.student_name,
+                    l.student_id,
+                    1 AS quantity,
+                    l.status,
+
+                    l.checkout_time AS created_at,
+
+                    l.checkout_time,
+                    l.return_time
+
+                FROM asset_loans l
+
+                JOIN hardware h
+                    ON h.item_id = l.item_id
+
+                WHERE 1 = 1
+            """
+
+            loan_params = []
+
+            if student_name:
                 loan_query += """
-                    ORDER BY l.created_at DESC
+                    AND l.student_name = ?
                 """
+                loan_params.append(student_name)
 
+            loan_query += """
+                ORDER BY l.checkout_time DESC
+            """
+
+            history.extend(
+                conn.execute(
+                    loan_query,
+                    loan_params
+                ).fetchall()
+            )
+
+            # =================================================
+            # 2. REJECTED BORROW REQUESTS
+            # =================================================
+            rejected_borrow_query = """
+                SELECT
+                    h.item_name,
+                    h.category,
+                    b.student_name,
+                    b.student_id,
+                    b.quantity,
+
+                    'Rejected' AS status,
+
+                    b.created_at,
+
+                    NULL AS checkout_time,
+                    NULL AS return_time
+
+                FROM borrow_requests b
+
+                JOIN hardware h
+                    ON h.item_id = b.item_id
+
+                WHERE LOWER(TRIM(b.status)) = 'rejected'
+            """
+
+            rejected_borrow_params = []
+
+            if student_name:
+                rejected_borrow_query += """
+                    AND b.student_name = ?
+                """
+                rejected_borrow_params.append(student_name)
+
+            try:
                 history.extend(
                     conn.execute(
-                        loan_query,
-                        loan_params
+                        rejected_borrow_query,
+                        rejected_borrow_params
                     ).fetchall()
                 )
 
-                # -------------------------------------------------
-                # 2. REJECTED BORROW REQUESTS
-                # -------------------------------------------------
-                try:
-                    rejected_borrow_query = """
-                        SELECT
-                            h.item_name,
-                            h.category,
-                            b.student_name,
-                            b.student_id,
-                            b.quantity,
-                            'Rejected' AS status,
-                            b.created_at,
-                            NULL AS checkout_time,
-                            NULL AS return_time
-                        FROM borrow_requests b
-                        JOIN hardware h
-                            ON h.item_id = b.item_id
-                        WHERE LOWER(TRIM(b.status)) = 'rejected'
-                    """
-
-                    rejected_borrow_params = []
-
-                    if student_name:
-                        rejected_borrow_query += """
-                            AND b.student_name = ?
-                        """
-                        rejected_borrow_params.append(student_name)
-
-                    history.extend(
-                        conn.execute(
-                            rejected_borrow_query,
-                            rejected_borrow_params
-                        ).fetchall()
-                    )
-
-                except sqlite3.Error as e:
-                    logger.error(
-                        f"Error fetching rejected borrow history: {e}"
-                    )
-
-                # -------------------------------------------------
-                # 3. REJECTED RETURN REQUESTS
-                # -------------------------------------------------
-                try:
-                    rejected_return_query = """
-                        SELECT
-                            h.item_name,
-                            h.category,
-                            l.student_name,
-                            l.student_id,
-                            1 AS quantity,
-                            'Rejected' AS status,
-                            l.created_at,
-                            l.checkout_time,
-                            NULL AS return_time
-                        FROM return_requests r
-                        JOIN asset_loans l
-                            ON l.loan_id = r.loan_id
-                        JOIN hardware h
-                            ON h.item_id = l.item_id
-                        WHERE LOWER(TRIM(r.status)) = 'rejected'
-                    """
-
-                    rejected_return_params = []
-
-                    if student_name:
-                        rejected_return_query += """
-                            AND l.student_name = ?
-                        """
-                        rejected_return_params.append(student_name)
-
-                    history.extend(
-                        conn.execute(
-                            rejected_return_query,
-                            rejected_return_params
-                        ).fetchall()
-                    )
-
-                except sqlite3.Error as e:
-                    logger.error(
-                        f"Error fetching rejected return history: {e}"
-                    )
-
-                history.sort(
-                    key=lambda row: row[6] if row[6] is not None else "",
-                    reverse=True
+            except sqlite3.Error as e:
+                logger.error(
+                    f"Error fetching rejected borrow history: {e}"
                 )
 
-                return history
+            # =================================================
+            # 3. REJECTED RETURN REQUESTS
+            # =================================================
+            rejected_return_query = """
+                SELECT
+                    h.item_name,
+                    h.category,
+                    l.student_name,
+                    l.student_id,
+                    1 AS quantity,
 
-        except sqlite3.Error as e:
-            logger.error(
-                f"Error fetching loan history: {e}"
+                    'Rejected' AS status,
+
+                    r.created_at,
+
+                    l.checkout_time,
+                    NULL AS return_time
+
+                FROM return_requests r
+
+                JOIN asset_loans l
+                    ON l.loan_id = r.loan_id
+
+                JOIN hardware h
+                    ON h.item_id = l.item_id
+
+                WHERE LOWER(TRIM(r.status)) = 'rejected'
+            """
+
+            rejected_return_params = []
+
+            if student_name:
+                rejected_return_query += """
+                    AND l.student_name = ?
+                """
+                rejected_return_params.append(student_name)
+
+            try:
+                history.extend(
+                    conn.execute(
+                        rejected_return_query,
+                        rejected_return_params
+                    ).fetchall()
+                )
+
+            except sqlite3.Error as e:
+                logger.error(
+                    f"Error fetching rejected return history: {e}"
+                )
+
+            # =================================================
+            # 4. SORT ALL HISTORY
+            # =================================================
+            history.sort(
+                key=lambda row: row[6] if row[6] is not None else "",
+                reverse=True
             )
+
+            return history
+
+    except sqlite3.Error as e:
+        logger.error(
+            f"Error fetching history from SQLite: {e}"
+        )
+        return []
+
+    def get_pending_borrow_requests(self):
+        """Return borrow requests awaiting administrator review."""
+        pg_conn = get_postgres_connection()
+        if pg_conn is not None:
+            try:
+                with pg_conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT b.request_id, h.item_name, b.student_name,
+                               b.student_id, b.quantity, b.created_at
+                        FROM borrow_requests AS b
+                        JOIN hardware AS h ON h.item_id = b.item_id
+                        WHERE LOWER(TRIM(b.status)) = 'pending'
+                        ORDER BY b.created_at DESC NULLS LAST, b.request_id DESC
+                    """)
+                    return cursor.fetchall()
+            except Exception as e:
+                logger.error(f"Error fetching pending borrow requests: {e}")
+                return []
+            finally:
+                pg_conn.close()
+
+        try:
+            with sqlite3.connect(self.db_name) as conn:
+                return conn.execute("""
+                    SELECT b.request_id, h.item_name, b.student_name,
+                           b.student_id, b.quantity, b.created_at
+                    FROM borrow_requests AS b
+                    JOIN hardware AS h ON h.item_id = b.item_id
+                    WHERE LOWER(TRIM(b.status)) = 'pending'
+                    ORDER BY b.created_at DESC, b.request_id DESC
+                """).fetchall()
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching pending borrow requests: {e}")
             return []
 
     def get_pending_return_requests(self):

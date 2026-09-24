@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+
 {% block content %}
 
 <div class="page-heading">
@@ -6,15 +7,19 @@
         {{ 'Administrator' if is_admin else 'Student' }} area
     </p>
 
+    ```
     <h1>History</h1>
 
     <p class="page-summary">
         Review borrowed item activity and quantity records.
     </p>
+    ```
+
 </div>
 
 <section class="panel">
 
+    ```
     <div class="panel-heading">
         <h2>
             {{ 'System History' if is_admin else 'My Borrow History' }}
@@ -22,7 +27,6 @@
     </div>
 
     <table>
-
         <thead>
             <tr>
                 <th>Item</th>
@@ -42,9 +46,7 @@
         </thead>
 
         <tbody>
-
             {% for row in history %}
-
             <tr>
 
                 <!-- ITEM -->
@@ -76,33 +78,26 @@
 
                 <!-- STATUS -->
                 <td>
-
                     {% if row[5]|lower == 'rejected' %}
-
                     <span class="status status-rejected">
                         Rejected
                     </span>
 
                     {% elif row[5]|lower == 'returned' %}
-
                     <span class="status status-returned">
                         Returned
                     </span>
 
                     {% elif row[5]|lower == 'active' %}
-
                     <span class="status status-active">
                         Active
                     </span>
 
                     {% else %}
-
                     <span class="status status-{{ row[5]|lower|replace(' ', '-') }}">
                         {{ row[5] }}
                     </span>
-
                     {% endif %}
-
                 </td>
 
                 <!-- CREATED AT -->
@@ -135,18 +130,16 @@
             </tr>
 
             {% else %}
-
             <tr>
                 <td colspan="{{ 9 if is_admin else 8 }}">
                     No borrowing history found.
                 </td>
             </tr>
-
             {% endfor %}
-
         </tbody>
-
     </table>
+    ```
+
 </section>
 
 {% endblock %}
