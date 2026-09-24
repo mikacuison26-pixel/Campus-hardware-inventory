@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-heading">
+    <p class="eyebrow">{{ 'Administrator' if is_admin else 'Student' }} area</p>
+    <h1>History</h1>
+    <p class="page-summary">Review borrowed item activity and quantity records.</p>
+</div>
+
+<section class="panel">
+    <div class="panel-heading">
+        <h2>{{ 'System History' if is_admin else 'My Borrow History' }}</h2>
+    </div>
+
+    ```
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Category</th>
+
+                {% if is_admin %}
+                <th>Student Name</th>
+                {% endif %}
+
+                <th>Student ID</th>
+                <th>Quantity</th>
+                <th>Status</th>
+                <th>Created At</th>
+                <th>Checkout Time</th>
+                <th>Return Time</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            {% for row in history %}
+            <tr>
+                <!-- ITEM -->
+                <td>{{ row[0] }}</td>
+
+                <!-- CATEGORY -->
+                <td>{{ row[1] }}</td>
+
+                <!-- STUDENT NAME - ADMIN ONLY -->
+                {% if is_admin %}
+                <td>{{ row[2] }}</td>
+                {% endif %}
+
+                <!-- STUDENT ID -->
+                <td>{{ row[3] }}</td>
+
+                <!-- QUANTITY -->
+                <td>{{ row[4] }}</td>
+
+                <!-- STATUS -->
+                <td>
+                    {% if row[5] == 'Rejected' %}
+                    <span class="status status-rejected">
+                        Rejected
+                    </span>
+                    {% elif row[5] == 'Returned' %}
+                    <span class="status status-returned">
+                        Returned
+                    </span>
+                    {% elif row[5] == 'Active' %}
+                    <span class="status status-active">
+                        Active
+                    </span>
+                    {% else %}
+                    <span class="status status-{{ row[5]|lower|replace(' ', '-') }}">
+                        {{ row[5] }}
+                    </span>
+                    {% endif %}
+                </td>
+
+                <!-- CREATED AT -->
+                <td>
+                    {{ row[6]|localtime if row[6] else '—' }}
+                </td>
+
+                <!-- CHECKOUT TIME -->
+                <td>
+                    {{ row[7]|localtime if row[7] else '—' }}
+                </td>
+
+                <!-- RETURN TIME -->
+                <td>
+                    {{ row[8]|localtime if row[8] else '—' }}
+                </td>
+            </tr>
+
+            {% else %}
+            <tr>
+                <td colspan="{{ 9 if is_admin else 8 }}">
+                    No borrowing history found.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    ```
+
+</section>
+{% endblock %}

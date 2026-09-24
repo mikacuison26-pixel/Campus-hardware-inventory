@@ -484,3 +484,18 @@ th {
         width: 100%
     }
 }
+
+.status-rejected {
+    color: #a33d4f;
+    font-weight: 700;
+}
+
+.status-returned {
+    color: #35613f;
+    font-weight: 700;
+}
+
+.status-active {
+    color: #35613f;
+    font-weight: 700;
+}
