@@ -1,64 +1,14 @@
 from logger import logger
+from models.database import db_connect, log_activity
 import csv
-import os
 import sqlite3
 import sys
 from pathlib import Path
 
-import psycopg
-from dotenv import load_dotenv
-
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 
 DB_NAME = "hardware_inventory.db"
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-
-def get_postgres_connection():
-    if not DATABASE_URL:
-        return None
-    try:
-        return psycopg.connect(DATABASE_URL)
-    except Exception as exc:
-        logger.warning(f"Postgres connection warning: {exc}")
-        return None
-
-
-def sync_hardware_to_supabase(item_name, category, quantity, unit_price, item_id=None):
-    if not DATABASE_URL:
-        return
-
-    try:
-        with psycopg.connect(DATABASE_URL) as conn:
-            with conn.cursor() as cur:
-                payload = (item_name, category, quantity, unit_price, "In Stock" if quantity >
-                           0 and quantity >= 10 else "Low Stock" if quantity > 0 else "Out of Stock")
-                if item_id is not None:
-                    cur.execute(
-                        """
-                        INSERT INTO hardware (item_id, item_name, category, quantity, unit_price, status)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (item_id) DO UPDATE SET
-                            item_name = EXCLUDED.item_name,
-                            category = EXCLUDED.category,
-                            quantity = EXCLUDED.quantity,
-                            unit_price = EXCLUDED.unit_price,
-                            status = EXCLUDED.status
-                        """,
-                        (item_id, *payload),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO hardware (item_name, category, quantity, unit_price, status)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (item_id) DO NOTHING
-                        """,
-                        payload,
-                    )
-    except Exception as exc:
-        logger.warning(f"Supabase sync warning for hardware add: {exc}")
 
 
 class HardwareController:
@@ -68,115 +18,56 @@ class HardwareController:
     # ---------------- CATALOG & INVENTORY MANAGEMENT ----------------
 
     def fetch_all_records(self, search_term=""):
-        """Fetch all hardware records from Supabase PostgreSQL."""
-        if not DATABASE_URL:
-            logger.error("DATABASE_URL is not configured.")
-            return []
-
+        """Fetches all items from the hardware table."""
         try:
-            with psycopg.connect(DATABASE_URL) as conn:
-                with conn.cursor() as cursor:
-                    search_pattern = f"%{search_term.strip()}%"
-
-                    query = """
-                        SELECT
-                            item_id,
-                            item_name,
-                            category,
-                            quantity,
-                            unit_price,
-                            CASE
-                                WHEN quantity <= 0 THEN 'Out of Stock'
-                                WHEN quantity < 10 THEN 'Low Stock'
-                                ELSE 'In Stock'
-                            END AS status
-                        FROM hardware
-                        WHERE item_name ILIKE %s
-                           OR category ILIKE %s
-                        ORDER BY item_id ASC
-                    """
-
-                    cursor.execute(query, (search_pattern, search_pattern))
-                    return cursor.fetchall()
-
+            conn = db_connect(self.db_name)
+            cursor = conn.cursor()
+            query = """
+                SELECT item_id, item_name, category, quantity, unit_price,
+                    CASE
+                        WHEN quantity <= 0 THEN 'Out of Stock'
+                        WHEN quantity < 10 THEN 'Low Stock'
+                        ELSE 'In Stock'
+                    END AS status
+                FROM hardware 
+                WHERE item_name LIKE ? OR category LIKE ?
+                ORDER BY item_id ASC
+            """
+            search_pattern = f"%{search_term.strip()}%"
+            cursor.execute(query, (search_pattern, search_pattern))
+            records = cursor.fetchall()
+            conn.close()
+            return records
         except Exception as e:
-            logger.error(f"PostgreSQL hardware fetch failed: {e}")
+            logger.error(f"Error fetching hardware records: {e}")
             return []
 
     def get_total_inventory_value(self):
         """Calculates total inventory valuation (quantity * unit_price)."""
-        pg_conn = get_postgres_connection()
-        if pg_conn is not None:
-            try:
-                with pg_conn.cursor() as cursor:
-                    result = cursor.execute(
-                        "SELECT COALESCE(SUM(quantity * unit_price), 0) FROM hardware"
-                    ).fetchone()
-                    return float(result[0])
-            except Exception as e:
-                logger.error(f"Error calculating total value: {e}")
-                return 0.0
-            finally:
-                pg_conn.close()
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
             cursor.execute("SELECT SUM(quantity * unit_price) FROM hardware")
             result = cursor.fetchone()[0]
             conn.close()
             return result if result is not None else 0.0
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error calculating total value: {e}")
             return 0.0
 
     def get_total_stocks(self):
-        """Return total hardware stock from Supabase PostgreSQL."""
-        if not DATABASE_URL:
-            logger.error("DATABASE_URL is not configured.")
-            return 0
-
         try:
-            with psycopg.connect(DATABASE_URL) as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT COALESCE(SUM(quantity), 0) FROM hardware"
-                    )
-                    result = cursor.fetchone()
-                    return int(result[0] or 0)
-
+            with db_connect(self.db_name) as conn:
+                result = conn.execute(
+                    "SELECT COALESCE(SUM(quantity), 0) FROM hardware").fetchone()
+            return int(result[0])
         except Exception as e:
-            logger.error(f"PostgreSQL total stock fetch failed: {e}")
+            logger.error(f"Error calculating total stocks: {e}")
             return 0
 
     def get_borrowed_items(self, student_id=None, student_name=None):
-        pg_conn = get_postgres_connection()
-        if pg_conn is not None:
-            try:
-                query = """
-                    SELECT l.item_id, h.item_name, h.category, l.student_name,
-                        l.student_id, COUNT(*) AS quantity,
-                        MIN(l.checkout_time) AS checkout_time, l.status
-                    FROM asset_loans l JOIN hardware h ON h.item_id = l.item_id
-                    WHERE l.status = 'Active'
-                """
-                params = []
-                if student_name:
-                    query += " AND l.student_name = %s"
-                    params.append(student_name)
-                elif student_id:
-                    query += " AND l.student_id = %s"
-                    params.append(student_id)
-                query += " GROUP BY l.item_id, h.item_name, h.category, l.student_name, l.student_id, l.status ORDER BY MAX(l.loan_id) DESC"
-                with pg_conn.cursor() as cursor:
-                    cursor.execute(query, params)
-                    return cursor.fetchall()
-            except Exception as e:
-                logger.error(f"Error fetching borrowed items: {e}")
-                return []
-            finally:
-                pg_conn.close()
         try:
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 query = """
                     SELECT l.item_id, h.item_name, h.category, l.student_name,
                         l.student_id, COUNT(*) AS quantity,
@@ -193,430 +84,47 @@ class HardwareController:
                     params = (student_id,)
                 query += " GROUP BY l.item_id, h.item_name, h.category, l.student_name, l.student_id, l.status ORDER BY MAX(l.loan_id) DESC"
                 return conn.execute(query, params).fetchall()
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error fetching borrowed items: {e}")
             return []
 
-
-def get_history_records(self, student_name=None):
-    """
-    Returns complete history:
-
-    NORMAL LOANS
-    - Active
-    - Returned
-
-    REJECTED REQUESTS
-    - Rejected borrow requests
-    - Rejected return requests
-
-    Because asset_loans does not contain created_at,
-    checkout_time is used as Created At for normal loans.
-    """
-
-    pg_conn = get_postgres_connection()
-
-    # =========================================================
-    # POSTGRESQL / SUPABASE
-    # =========================================================
-    if pg_conn is not None:
+    def get_history_records(self, student_name=None):
+        """Return the complete audit trail, including rejected actions."""
         try:
-            history = []
-
-            # =================================================
-            # 1. NORMAL LOAN HISTORY
-            # =================================================
-            loan_query = """
-                SELECT
-                    h.item_name,
-                    h.category,
-                    l.student_name,
-                    l.student_id,
-                    1 AS quantity,
-                    l.status,
-
-                    -- asset_loans has no created_at,
-                    -- so checkout_time is the loan creation time
-                    l.checkout_time AS created_at,
-
-                    l.checkout_time,
-                    l.return_time
-
-                FROM asset_loans l
-
-                JOIN hardware h
-                    ON h.item_id = l.item_id
-
-                WHERE 1 = 1
-            """
-
-            loan_params = []
-
-            if student_name:
-                loan_query += """
-                    AND l.student_name = %s
+            with db_connect(self.db_name) as conn:
+                query = """
+                    SELECT
+                        history_id, actor_username, actor_role, action,
+                        entity_type, entity_id, item_name, student_name,
+                        student_id, quantity, status, details, created_at
+                    FROM activity_history
+                    WHERE 1 = 1
                 """
-                loan_params.append(student_name)
-
-            loan_query += """
-                ORDER BY l.checkout_time DESC NULLS LAST
-            """
-
-            with pg_conn.cursor() as cursor:
-                cursor.execute(loan_query, loan_params)
-                history.extend(cursor.fetchall())
-
-            # =================================================
-            # 2. REJECTED BORROW REQUESTS
-            # =================================================
-            rejected_borrow_query = """
-                SELECT
-                    h.item_name,
-                    h.category,
-                    b.student_name,
-                    b.student_id,
-                    b.quantity,
-
-                    'Rejected' AS status,
-
-                    b.created_at,
-
-                    NULL AS checkout_time,
-                    NULL AS return_time
-
-                FROM borrow_requests b
-
-                JOIN hardware h
-                    ON h.item_id = b.item_id
-
-                WHERE LOWER(TRIM(b.status)) = 'rejected'
-            """
-
-            rejected_borrow_params = []
-
-            if student_name:
-                rejected_borrow_query += """
-                    AND b.student_name = %s
-                """
-                rejected_borrow_params.append(student_name)
-
-            rejected_borrow_query += """
-                ORDER BY b.created_at DESC NULLS LAST
-            """
-
-            try:
-                with pg_conn.cursor() as cursor:
-                    cursor.execute(
-                        rejected_borrow_query,
-                        rejected_borrow_params
-                    )
-                    history.extend(cursor.fetchall())
-
-            except Exception as e:
-                logger.error(
-                    f"Error fetching rejected borrow history: {e}"
-                )
-
-            # =================================================
-            # 3. REJECTED RETURN REQUESTS
-            # =================================================
-            rejected_return_query = """
-                SELECT
-                    h.item_name,
-                    h.category,
-                    l.student_name,
-                    l.student_id,
-                    1 AS quantity,
-
-                    'Rejected' AS status,
-
-                    r.created_at,
-
-                    l.checkout_time,
-                    NULL AS return_time
-
-                FROM return_requests r
-
-                JOIN asset_loans l
-                    ON l.loan_id = r.loan_id
-
-                JOIN hardware h
-                    ON h.item_id = l.item_id
-
-                WHERE LOWER(TRIM(r.status)) = 'rejected'
-            """
-
-            rejected_return_params = []
-
-            if student_name:
-                rejected_return_query += """
-                    AND l.student_name = %s
-                """
-                rejected_return_params.append(student_name)
-
-            rejected_return_query += """
-                ORDER BY r.created_at DESC NULLS LAST
-            """
-
-            try:
-                with pg_conn.cursor() as cursor:
-                    cursor.execute(
-                        rejected_return_query,
-                        rejected_return_params
-                    )
-                    history.extend(cursor.fetchall())
-
-            except Exception as e:
-                logger.error(
-                    f"Error fetching rejected return history: {e}"
-                )
-
-            # =================================================
-            # 4. SORT ALL HISTORY
-            # =================================================
-            history.sort(
-                key=lambda row: row[6] if row[6] is not None else "",
-                reverse=True
-            )
-
-            logger.info(
-                f"History loaded successfully: {len(history)} records"
-            )
-
-            return history
-
+                params = []
+                if student_name:
+                    query += " AND (actor_username = ? OR student_name = ? OR student_id = ?)"
+                    params.extend([student_name, student_name, student_name])
+                query += " ORDER BY history_id DESC"
+                return conn.execute(query, params).fetchall()
         except Exception as e:
-            logger.error(
-                f"Error fetching history from PostgreSQL: {e}"
-            )
+            logger.error(f"Error fetching activity history: {e}")
             return []
 
-        finally:
-            pg_conn.close()
-
-    # =========================================================
-    # SQLITE FALLBACK
-    # =========================================================
-    try:
-        with sqlite3.connect(self.db_name) as conn:
-
-            history = []
-
-            # =================================================
-            # 1. NORMAL LOAN HISTORY
-            # =================================================
-            loan_query = """
-                SELECT
-                    h.item_name,
-                    h.category,
-                    l.student_name,
-                    l.student_id,
-                    1 AS quantity,
-                    l.status,
-
-                    l.checkout_time AS created_at,
-
-                    l.checkout_time,
-                    l.return_time
-
-                FROM asset_loans l
-
-                JOIN hardware h
-                    ON h.item_id = l.item_id
-
-                WHERE 1 = 1
-            """
-
-            loan_params = []
-
-            if student_name:
-                loan_query += """
-                    AND l.student_name = ?
-                """
-                loan_params.append(student_name)
-
-            loan_query += """
-                ORDER BY l.checkout_time DESC
-            """
-
-            history.extend(
-                conn.execute(
-                    loan_query,
-                    loan_params
-                ).fetchall()
-            )
-
-            # =================================================
-            # 2. REJECTED BORROW REQUESTS
-            # =================================================
-            rejected_borrow_query = """
-                SELECT
-                    h.item_name,
-                    h.category,
-                    b.student_name,
-                    b.student_id,
-                    b.quantity,
-
-                    'Rejected' AS status,
-
-                    b.created_at,
-
-                    NULL AS checkout_time,
-                    NULL AS return_time
-
-                FROM borrow_requests b
-
-                JOIN hardware h
-                    ON h.item_id = b.item_id
-
-                WHERE LOWER(TRIM(b.status)) = 'rejected'
-            """
-
-            rejected_borrow_params = []
-
-            if student_name:
-                rejected_borrow_query += """
-                    AND b.student_name = ?
-                """
-                rejected_borrow_params.append(student_name)
-
-            try:
-                history.extend(
-                    conn.execute(
-                        rejected_borrow_query,
-                        rejected_borrow_params
-                    ).fetchall()
-                )
-
-            except sqlite3.Error as e:
-                logger.error(
-                    f"Error fetching rejected borrow history: {e}"
-                )
-
-            # =================================================
-            # 3. REJECTED RETURN REQUESTS
-            # =================================================
-            rejected_return_query = """
-                SELECT
-                    h.item_name,
-                    h.category,
-                    l.student_name,
-                    l.student_id,
-                    1 AS quantity,
-
-                    'Rejected' AS status,
-
-                    r.created_at,
-
-                    l.checkout_time,
-                    NULL AS return_time
-
-                FROM return_requests r
-
-                JOIN asset_loans l
-                    ON l.loan_id = r.loan_id
-
-                JOIN hardware h
-                    ON h.item_id = l.item_id
-
-                WHERE LOWER(TRIM(r.status)) = 'rejected'
-            """
-
-            rejected_return_params = []
-
-            if student_name:
-                rejected_return_query += """
-                    AND l.student_name = ?
-                """
-                rejected_return_params.append(student_name)
-
-            try:
-                history.extend(
-                    conn.execute(
-                        rejected_return_query,
-                        rejected_return_params
-                    ).fetchall()
-                )
-
-            except sqlite3.Error as e:
-                logger.error(
-                    f"Error fetching rejected return history: {e}"
-                )
-
-            # =================================================
-            # 4. SORT ALL HISTORY
-            # =================================================
-            history.sort(
-                key=lambda row: row[6] if row[6] is not None else "",
-                reverse=True
-            )
-
-            return history
-
-    except sqlite3.Error as e:
-        logger.error(
-            f"Error fetching history from SQLite: {e}"
-        )
-        return []
-
     def get_pending_borrow_requests(self):
-        """Return borrow requests awaiting administrator review."""
-        pg_conn = get_postgres_connection()
-        if pg_conn is not None:
-            try:
-                with pg_conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT b.request_id, h.item_name, b.student_name,
-                               b.student_id, b.quantity, b.created_at
-                        FROM borrow_requests AS b
-                        JOIN hardware AS h ON h.item_id = b.item_id
-                        WHERE LOWER(TRIM(b.status)) = 'pending'
-                        ORDER BY b.created_at DESC NULLS LAST, b.request_id DESC
-                    """)
-                    return cursor.fetchall()
-            except Exception as e:
-                logger.error(f"Error fetching pending borrow requests: {e}")
-                return []
-            finally:
-                pg_conn.close()
-
         try:
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 return conn.execute("""
-                    SELECT b.request_id, h.item_name, b.student_name,
-                           b.student_id, b.quantity, b.created_at
-                    FROM borrow_requests AS b
-                    JOIN hardware AS h ON h.item_id = b.item_id
-                    WHERE LOWER(TRIM(b.status)) = 'pending'
-                    ORDER BY b.created_at DESC, b.request_id DESC
+                    SELECT b.request_id, h.item_name, b.student_name, b.student_id, b.quantity, b.created_at
+                    FROM borrow_requests b JOIN hardware h ON h.item_id = b.item_id
+                    WHERE b.status = 'Pending' ORDER BY b.request_id DESC
                 """).fetchall()
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching pending borrow requests: {e}")
+        except Exception as e:
+            logger.error(f"Error fetching borrow requests: {e}")
             return []
 
     def get_pending_return_requests(self):
-        pg_conn = get_postgres_connection()
-        if pg_conn is not None:
-            try:
-                with pg_conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT MIN(r.request_id), h.item_name, l.student_name,
-                               r.student_id, COUNT(*) AS quantity, MIN(r.created_at)
-                        FROM return_requests r
-                        JOIN asset_loans l ON l.loan_id = r.loan_id
-                        JOIN hardware h ON h.item_id = l.item_id
-                        WHERE r.status = 'Pending'
-                        GROUP BY l.item_id, h.item_name, l.student_name, r.student_id
-                        ORDER BY MIN(r.request_id) DESC
-                    """)
-                    return cursor.fetchall()
-            except Exception as e:
-                logger.error(f"Error fetching return requests: {e}")
-                return []
-            finally:
-                pg_conn.close()
         try:
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 return conn.execute("""
                     SELECT MIN(r.request_id), h.item_name, l.student_name,
                         r.student_id, COUNT(*) AS quantity, MIN(r.created_at)
@@ -627,7 +135,7 @@ def get_history_records(self, student_name=None):
                     GROUP BY l.item_id, l.student_name, r.student_id
                     ORDER BY MIN(r.request_id) DESC
                 """).fetchall()
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error fetching return requests: {e}")
             return []
 
@@ -640,48 +148,7 @@ def get_history_records(self, student_name=None):
             quantity = int(quantity)
             if quantity <= 0:
                 return False, "Borrow quantity must be greater than zero."
-
-            pg_conn = get_postgres_connection()
-            if pg_conn is not None:
-                try:
-                    with pg_conn.cursor() as cursor:
-                        cursor.execute(
-                            "SELECT quantity FROM hardware WHERE item_id = %s FOR UPDATE",
-                            (item_id,),
-                        )
-                        item = cursor.fetchone()
-                        if not item:
-                            return False, "Item not found."
-                        cursor.execute(
-                            """
-                            SELECT COALESCE(SUM(quantity), 0)
-                            FROM borrow_requests
-                            WHERE item_id = %s AND status = 'Pending'
-                            """,
-                            (item_id,),
-                        )
-                        pending = cursor.fetchone()[0]
-                        if quantity + pending > item[0]:
-                            return False, "Requested quantity exceeds available stock."
-                        cursor.execute(
-                            "SELECT COALESCE(MAX(request_id), 0) + 1 FROM borrow_requests"
-                        )
-                        request_id = cursor.fetchone()[0]
-                        cursor.execute(
-                            """
-                            INSERT INTO borrow_requests
-                                (request_id, item_id, student_id, student_name, quantity, status)
-                            VALUES (%s, %s, %s, %s, %s, 'Pending')
-                            """,
-                            (request_id, item_id, student_id,
-                             student_name, quantity),
-                        )
-                    pg_conn.commit()
-                    return True, "Borrow request submitted for approval."
-                finally:
-                    pg_conn.close()
-
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 item = conn.execute(
                     "SELECT quantity FROM hardware WHERE item_id = ?", (item_id,)).fetchone()
                 if not item:
@@ -692,135 +159,109 @@ def get_history_records(self, student_name=None):
                 """, (item_id,)).fetchone()[0]
                 if quantity + pending > item[0]:
                     return False, "Requested quantity exceeds available stock."
-                conn.execute("""
-                    INSERT INTO borrow_requests
-                        (item_id, student_id, student_name, quantity, created_at)
-                    VALUES (?, ?, ?, ?, datetime('now', '+8 hours'))
-                """, (item_id, student_id, student_name, quantity))
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO borrow_requests (item_id, student_id, student_name, quantity) VALUES (?, ?, ?, ?)",
+                    (item_id, student_id, student_name, quantity)
+                )
+                request_id = getattr(cursor, "lastrowid", None)
+                if request_id is None:
+                    try:
+                        request_id = conn.execute(
+                            "SELECT request_id FROM borrow_requests WHERE item_id = ? AND student_id = ? AND student_name = ? ORDER BY request_id DESC LIMIT 1",
+                            (item_id, student_id, student_name)
+                        ).fetchone()[0]
+                    except Exception:
+                        request_id = None
+            log_activity(
+                self.db_name, actor_username=student_name, actor_role="USER",
+                action="Borrow Request Submitted", entity_type="borrow_request",
+                entity_id=request_id, item_name=None, student_name=student_name,
+                student_id=student_id, quantity=quantity, status="Pending",
+                details="Borrow request submitted for admin approval."
+            )
             return True, "Borrow request submitted for approval."
-        except (ValueError, sqlite3.Error, psycopg.Error) as e:
-            logger.error(f"Borrow request failed: {e}")
-            return False, "Borrow request could not be submitted. Please try again."
+        except (ValueError, sqlite3.Error) as e:
+            return False, f"Borrow request failed: {e}"
 
-    def approve_borrow_request(self, request_id, approve=True):
-        pg_conn = get_postgres_connection()
-        if pg_conn is not None:
-            try:
-                with pg_conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        SELECT item_id, student_id, student_name, quantity, status, created_at
-                        FROM borrow_requests
-                        WHERE request_id = %s
-                        FOR UPDATE
-                        """,
-                        (request_id,),
-                    )
-                    row = cursor.fetchone()
-                    if not row:
-                        return False, "Borrow request not found."
-                    item_id, student_id, student_name, quantity, status, request_created_at = row
-                    if status != "Pending":
-                        return False, "Borrow request has already been processed."
-                    if approve:
-                        cursor.execute(
-                            "SELECT quantity FROM hardware WHERE item_id = %s FOR UPDATE", (item_id,))
-                        stock = cursor.fetchone()
-                        if not stock or stock[0] < quantity:
-                            return False, "Cannot approve: insufficient stock."
-                        cursor.execute(
-                            """
-                            UPDATE hardware
-                            SET quantity = quantity - %s,
-                                status = CASE WHEN quantity - %s <= 0 THEN 'Out of Stock'
-                                    WHEN quantity - %s < 10 THEN 'Low Stock' ELSE 'In Stock' END
-                            WHERE item_id = %s
-                            """,
-                            (quantity, quantity, quantity, item_id),
-                        )
-                        cursor.execute(
-                            "SELECT COALESCE(MAX(loan_id), 0) FROM asset_loans"
-                        )
-                        next_loan_id = cursor.fetchone()[0] + 1
-                        cursor.executemany(
-                            """
-                            INSERT INTO asset_loans
-                                (loan_id, item_id, student_id, student_name,
-                                 created_at, checkout_time, return_time, status)
-                            VALUES (
-                                %s, %s, %s, %s, %s,
-                                CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila',
-                                NULL, 'Active'
-                            )
-                            """,
-                            [
-                                (next_loan_id + offset, item_id,
-                                 student_id, student_name, request_created_at)
-                                for offset in range(quantity)
-                            ],
-                        )
-                    cursor.execute(
-                        "UPDATE borrow_requests SET status = %s WHERE request_id = %s",
-                        ('Approved' if approve else 'Rejected', request_id),
-                    )
-                pg_conn.commit()
-                return True, f"Borrow request {'approved' if approve else 'rejected'}."
-            except Exception as e:
-                logger.error(f"Borrow approval failed: {e}")
-                return False, f"Borrow approval failed: {e}"
-            finally:
-                pg_conn.close()
+    def approve_borrow_request(self, request_id, approve=True, actor_username='ADMIN'):
         try:
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 row = conn.execute(
-                    "SELECT item_id, student_id, student_name, quantity, status, created_at FROM borrow_requests WHERE request_id = ?", (request_id,)).fetchone()
+                    """
+                    SELECT b.item_id, b.student_id, b.student_name, b.quantity, b.status,
+                           h.item_name
+                    FROM borrow_requests b
+                    JOIN hardware h ON h.item_id = b.item_id
+                    WHERE b.request_id = ?
+                    """, (request_id,)).fetchone()
                 if not row:
                     return False, "Borrow request not found."
-                item_id, student_id, student_name, quantity, status, request_created_at = row
+
+                item_id, student_id, student_name, quantity, status, item_name = row
                 if status != "Pending":
                     return False, "Borrow request has already been processed."
+
+                new_status = "Approved" if approve else "Rejected"
+
                 if approve:
                     stock = conn.execute(
                         "SELECT quantity FROM hardware WHERE item_id = ?", (item_id,)).fetchone()
                     if not stock or stock[0] < quantity:
                         return False, "Cannot approve: insufficient stock."
-                    conn.execute("UPDATE hardware SET quantity = quantity - ?, status = CASE WHEN quantity - ? <= 0 THEN 'Out of Stock' WHEN quantity - ? < 10 THEN 'Low Stock' ELSE 'In Stock' END WHERE item_id = ?",
-                                 (quantity, quantity, quantity, item_id))
+
+                    conn.execute(
+                        """UPDATE hardware
+                           SET quantity = quantity - ?,
+                               status = CASE
+                                   WHEN quantity - ? <= 0 THEN 'Out of Stock'
+                                   WHEN quantity - ? < 10 THEN 'Low Stock'
+                                   ELSE 'In Stock'
+                               END
+                           WHERE item_id = ?""",
+                        (quantity, quantity, quantity, item_id)
+                    )
                     for _ in range(quantity):
                         conn.execute(
-                            """
-                            INSERT INTO asset_loans
-                                (item_id, student_id, student_name, created_at,
-                                 checkout_time, return_time, status)
-                            VALUES (?, ?, ?, ?, datetime('now', '+8 hours'), NULL, 'Active')
-                            """,
-                            (item_id, student_id, student_name, request_created_at),
+                            """INSERT INTO asset_loans
+                               (item_id, student_id, student_name, status)
+                               VALUES (?, ?, ?, 'Active')""",
+                            (item_id, student_id, student_name)
                         )
-                conn.execute("UPDATE borrow_requests SET status = ? WHERE request_id = ?",
-                             ('Approved' if approve else 'Rejected', request_id))
+
+                conn.execute(
+                    "UPDATE borrow_requests SET status = ? WHERE request_id = ?",
+                    (new_status, request_id)
+                )
+
+            log_activity(
+                self.db_name, actor_username=actor_username, actor_role="ADMIN",
+                action=f"Borrow Request {new_status}",
+                entity_type="borrow_request", entity_id=request_id,
+                item_name=item_name, student_name=student_name,
+                student_id=student_id, quantity=quantity, status=new_status,
+                details=f"Administrator {'approved' if approve else 'rejected'} the borrow request."
+            )
             return True, f"Borrow request {'approved' if approve else 'rejected'}."
-        except sqlite3.Error as e:
+        except Exception as e:
+            logger.error(f"Borrow approval failed: {e}")
             return False, f"Borrow approval failed: {e}"
 
     def request_return(self, loan_id, student_id, student_name):
         try:
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 loan = conn.execute(
                     "SELECT status, student_id, student_name FROM asset_loans WHERE loan_id = ?", (loan_id,)).fetchone()
                 if not loan or loan[0] != 'Active' or loan[2] != student_name:
                     return False, "Active borrowed item not found."
-                loan_student_id = (loan[1] or "").strip()
-                if not loan_student_id or loan_student_id.upper() == "EMPTY":
-                    return False, "Student ID is missing from this loan. Please contact an administrator."
                 existing = conn.execute(
                     "SELECT 1 FROM return_requests WHERE loan_id = ? AND status = 'Pending'", (loan_id,)).fetchone()
                 if existing:
                     return False, "A return request is already pending."
                 conn.execute(
-                    "INSERT INTO return_requests (loan_id, student_id) VALUES (?, ?)",
-                    (loan_id, loan_student_id))
+                    "INSERT INTO return_requests (loan_id, student_id) VALUES (?, ?)", (loan_id, student_id))
             return True, "Return request submitted for approval."
-        except sqlite3.Error as e:
+        except Exception as e:
             return False, f"Return request failed: {e}"
 
     def request_return_quantity(self, item_id, student_id, student_name, quantity):
@@ -828,206 +269,111 @@ def get_history_records(self, student_name=None):
             quantity = int(quantity)
             if quantity <= 0:
                 return False, "Return quantity must be greater than zero."
-
-            pg_conn = get_postgres_connection()
-            if pg_conn is not None:
-                try:
-                    with pg_conn.cursor() as cursor:
-                        cursor.execute(
-                            """
-                            SELECT l.loan_id, l.student_id
-                            FROM asset_loans l
-                            WHERE l.item_id = %s AND l.student_name = %s
-                              AND l.status = 'Active'
-                            ORDER BY l.loan_id ASC
-                            """,
-                            (item_id, student_name),
-                        )
-                        active_loans = cursor.fetchall()
-                        if len(active_loans) < quantity:
-                            return False, f"You only have {len(active_loans)} active item(s) to return."
-                        cursor.execute(
-                            """
-                            SELECT l.loan_id
-                            FROM return_requests r
-                            JOIN asset_loans l ON l.loan_id = r.loan_id
-                            WHERE r.status = 'Pending'
-                              AND l.item_id = %s AND l.student_name = %s
-                            """,
-                            (item_id, student_name),
-                        )
-                        pending_loan_ids = {row[0]
-                                            for row in cursor.fetchall()}
-                        missing_quantity = quantity - len(pending_loan_ids)
-                        if missing_quantity <= 0:
-                            return True, "A return request for that quantity is already pending admin approval."
-                        loans = [
-                            loan for loan in active_loans
-                            if loan[0] not in pending_loan_ids
-                        ][:missing_quantity]
-                        if any(not (loan[1] or "").strip() or loan[1].strip().upper() == "EMPTY" for loan in loans):
-                            return False, "Student ID is missing from one or more loans. Please contact an administrator."
-                        cursor.execute(
-                            "SELECT COALESCE(MAX(request_id), 0) FROM return_requests"
-                        )
-                        next_request_id = cursor.fetchone()[0] + 1
-                        cursor.executemany(
-                            """
-                            INSERT INTO return_requests
-                                (request_id, loan_id, student_id, status)
-                            VALUES (%s, %s, %s, 'Pending')
-                            """,
-                            [
-                                (next_request_id + offset,
-                                 loan[0], loan[1].strip())
-                                for offset, loan in enumerate(loans)
-                            ],
-                        )
-                    pg_conn.commit()
-                    return True, f"Return request submitted for {quantity} item(s)."
-                finally:
-                    pg_conn.close()
-
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 loans = conn.execute("""
-                    SELECT l.loan_id, l.student_id
+                    SELECT l.loan_id
                     FROM asset_loans l
                     WHERE l.item_id = ? AND l.student_name = ? AND l.status = 'Active'
-                    ORDER BY l.loan_id ASC
-                """, (item_id, student_name)).fetchall()
+                    AND NOT EXISTS (
+                        SELECT 1 FROM return_requests r
+                        WHERE r.loan_id = l.loan_id AND r.status = 'Pending'
+                    )
+                    ORDER BY l.loan_id ASC LIMIT ?
+                """, (item_id, student_name, quantity)).fetchall()
                 if len(loans) < quantity:
-                    return False, f"You only have {len(loans)} active item(s) to return."
-                pending_loan_ids = {
-                    row[0] for row in conn.execute(
-                        """
-                        SELECT r.loan_id
-                        FROM return_requests r
-                        JOIN asset_loans l ON l.loan_id = r.loan_id
-                        WHERE r.status = 'Pending'
-                          AND l.item_id = ? AND l.student_name = ?
-                        """,
-                        (item_id, student_name),
-                    ).fetchall()
-                }
-                missing_quantity = quantity - len(pending_loan_ids)
-                if missing_quantity <= 0:
-                    return True, "A return request for that quantity is already pending admin approval."
-                loans = [
-                    loan for loan in loans if loan[0] not in pending_loan_ids
-                ][:missing_quantity]
-                if any(not (loan[1] or "").strip() or loan[1].strip().upper() == "EMPTY" for loan in loans):
-                    return False, "Student ID is missing from one or more loans. Please contact an administrator."
+                    return False, "That many items are unavailable for return."
                 conn.executemany(
                     "INSERT INTO return_requests (loan_id, student_id) VALUES (?, ?)",
-                    [(loan[0], loan[1].strip()) for loan in loans],
+                    [(loan[0], student_id) for loan in loans],
                 )
+            log_activity(
+                self.db_name, actor_username=student_name, actor_role="USER",
+                action="Return Request Submitted", entity_type="return_request",
+                item_name=None, student_name=student_name, student_id=student_id,
+                quantity=quantity, status="Pending",
+                details="Return request submitted for admin approval."
+            )
             return True, f"Return request submitted for {quantity} item(s)."
         except (ValueError, sqlite3.Error) as e:
             return False, f"Return request failed: {e}"
 
-    def approve_return_request(self, request_id, approve=True):
-        pg_conn = get_postgres_connection()
-        if pg_conn is not None:
-            try:
-                with pg_conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        SELECT r.loan_id, r.status, l.item_id, l.student_name, r.student_id
-                        FROM return_requests r JOIN asset_loans l ON l.loan_id = r.loan_id
-                        WHERE r.request_id = %s FOR UPDATE
-                        """,
-                        (request_id,),
-                    )
-                    row = cursor.fetchone()
-                    if not row or row[1] != 'Pending':
-                        return False, "Return request is unavailable."
-                    item_id, student_name, student_id = row[2], row[3], row[4]
-                    cursor.execute(
-                        """
-                        SELECT r.request_id, r.loan_id
-                        FROM return_requests r JOIN asset_loans l ON l.loan_id = r.loan_id
-                        WHERE r.status = 'Pending' AND l.item_id = %s
-                          AND l.student_name = %s AND r.student_id = %s
-                        """,
-                        (item_id, student_name, student_id),
-                    )
-                    request_rows = cursor.fetchall()
-                    loan_ids = [request[1] for request in request_rows]
-                    if approve:
-                        cursor.execute(
-                            "SELECT COUNT(*) FROM asset_loans WHERE loan_id = ANY(%s) AND status = 'Active'",
-                            (loan_ids,),
-                        )
-                        if cursor.fetchone()[0] != len(loan_ids):
-                            return False, "Borrowed item is unavailable."
-                        cursor.execute(
-                            "UPDATE asset_loans SET status = 'Returned', return_time = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') WHERE loan_id = ANY(%s)",
-                            (loan_ids,),
-                        )
-                        cursor.execute(
-                            """
-                            UPDATE hardware
-                            SET quantity = quantity + %s,
-                                status = CASE WHEN quantity + %s < 10 THEN 'Low Stock' ELSE 'In Stock' END
-                            WHERE item_id = %s
-                            """,
-                            (len(loan_ids), len(loan_ids), item_id),
-                        )
-                    cursor.execute(
-                        "UPDATE return_requests SET status = %s WHERE request_id = ANY(%s)",
-                        ('Approved' if approve else 'Rejected',
-                         [request[0] for request in request_rows]),
-                    )
-                pg_conn.commit()
-                return True, f"Return request {'approved' if approve else 'rejected'} for {len(request_rows)} item(s)."
-            except Exception as e:
-                logger.error(f"Return approval failed: {e}")
-                return False, f"Return approval failed: {e}"
-            finally:
-                pg_conn.close()
+    def approve_return_request(self, request_id, approve=True, actor_username='ADMIN'):
         try:
-            with sqlite3.connect(self.db_name) as conn:
+            with db_connect(self.db_name) as conn:
                 row = conn.execute(
                     """
-                    SELECT r.loan_id, r.status, l.item_id, l.student_name, r.student_id
-                    FROM return_requests r JOIN asset_loans l ON l.loan_id = r.loan_id
+                    SELECT r.loan_id, r.status, l.item_id, l.student_name, r.student_id,
+                           h.item_name
+                    FROM return_requests r
+                    JOIN asset_loans l ON l.loan_id = r.loan_id
+                    JOIN hardware h ON h.item_id = l.item_id
                     WHERE r.request_id = ?
                     """, (request_id,)).fetchone()
-                if not row or row[1] != 'Pending':
+                if not row or row[1] != "Pending":
                     return False, "Return request is unavailable."
-                item_id, student_name, student_id = row[2], row[3], row[4]
+
+                item_id, student_name, student_id, item_name = row[2], row[3], row[4], row[5]
+
                 request_rows = conn.execute("""
                     SELECT r.request_id, r.loan_id
-                    FROM return_requests r JOIN asset_loans l ON l.loan_id = r.loan_id
+                    FROM return_requests r
+                    JOIN asset_loans l ON l.loan_id = r.loan_id
                     WHERE r.status = 'Pending' AND l.item_id = ?
-                        AND l.student_name = ? AND r.student_id = ?
+                      AND l.student_name = ? AND r.student_id = ?
                 """, (item_id, student_name, student_id)).fetchall()
+
                 loan_ids = [request[1] for request in request_rows]
+                new_status = "Approved" if approve else "Rejected"
+
                 if approve:
+                    if not loan_ids:
+                        return False, "Borrowed item is unavailable."
+
+                    placeholders = ",".join("?" for _ in loan_ids)
                     active_count = conn.execute(
-                        "SELECT COUNT(*) FROM asset_loans WHERE loan_id IN ({}) AND status = 'Active'".format(
-                            ','.join('?' for _ in loan_ids)), loan_ids).fetchone()[0] if loan_ids else 0
+                        f"SELECT COUNT(*) FROM asset_loans WHERE loan_id IN ({placeholders}) AND status = 'Active'",
+                        loan_ids
+                    ).fetchone()[0]
                     if active_count != len(loan_ids):
                         return False, "Borrowed item is unavailable."
+
                     conn.execute(
-                        "UPDATE asset_loans SET status = 'Returned', return_time = datetime('now', '+8 hours') WHERE loan_id IN ({})".format(
-                            ','.join('?' for _ in loan_ids)), loan_ids)
+                        f"UPDATE asset_loans SET status = 'Returned', return_time = CURRENT_TIMESTAMP WHERE loan_id IN ({placeholders})",
+                        loan_ids
+                    )
                     conn.execute(
-                        "UPDATE hardware SET quantity = quantity + ?, status = CASE WHEN quantity + ? <= 0 THEN 'Out of Stock' WHEN quantity + ? < 10 THEN 'Low Stock' ELSE 'In Stock' END WHERE item_id = ?",
-                        (len(loan_ids), len(loan_ids), len(loan_ids), item_id))
-                conn.execute("UPDATE return_requests SET status = ? WHERE request_id = ?",
-                             ('Approved' if approve else 'Rejected', request_id))
-                if len(request_rows) > 1:
+                        """UPDATE hardware
+                           SET quantity = quantity + ?,
+                               status = CASE
+                                   WHEN quantity + ? <= 0 THEN 'Out of Stock'
+                                   WHEN quantity + ? < 10 THEN 'Low Stock'
+                                   ELSE 'In Stock'
+                               END
+                           WHERE item_id = ?""",
+                        (len(loan_ids), len(loan_ids), len(loan_ids), item_id)
+                    )
+
+                if request_rows:
                     conn.executemany(
                         "UPDATE return_requests SET status = ? WHERE request_id = ?",
-                        [('Approved' if approve else 'Rejected', request[0])
-                         for request in request_rows if request[0] != request_id],
+                        [(new_status, request[0]) for request in request_rows]
                     )
+
+            log_activity(
+                self.db_name, actor_username=actor_username, actor_role="ADMIN",
+                action=f"Return Request {new_status}",
+                entity_type="return_request", entity_id=request_id,
+                item_name=item_name, student_name=student_name,
+                student_id=student_id, quantity=len(request_rows),
+                status=new_status,
+                details=f"Administrator {'approved' if approve else 'rejected'} the return request."
+            )
             return True, f"Return request {'approved' if approve else 'rejected'} for {len(request_rows)} item(s)."
-        except sqlite3.Error as e:
+        except Exception as e:
+            logger.error(f"Return approval failed: {e}")
             return False, f"Return approval failed: {e}"
 
-    def add_hardware(self, name, category, quantity, unit_price):
+    def add_hardware(self, name, category, quantity, unit_price, actor_username='ADMIN'):
         """Adds a new item to the inventory and computes its status dynamically."""
         try:
             qty = int(quantity)
@@ -1040,28 +386,30 @@ def get_history_records(self, student_name=None):
             else:
                 status = "In Stock"
 
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO hardware (item_name, category, quantity, unit_price, status)
                 VALUES (?, ?, ?, ?, ?)
             """, (name, category, qty, price, status))
             conn.commit()
-            new_item_id = cursor.lastrowid
             conn.close()
-
-            sync_hardware_to_supabase(name, category, qty, price, new_item_id)
-
             logger.info(
                 f"HARDWARE ADDED: '{name}' (Qty: {qty}, Price: {price})")
+            log_activity(
+                self.db_name, actor_username=actor_username, actor_role="ADMIN",
+                action="Hardware Added", entity_type="hardware",
+                item_name=name, quantity=qty, status=status,
+                details=f"New inventory item added at unit price {price}."
+            )
             return True, "Hardware item added successfully."
         except ValueError:
             return False, "Quantity must be an integer and price must be a number."
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error adding hardware: {e}")
             return False, f"Database error: {e}"
 
-    def update_hardware(self, item_id, new_quantity, new_price):
+    def update_hardware(self, item_id, new_quantity, new_price, actor_username='ADMIN'):
         """Updates quantity and unit price for an item and recalculates status."""
         try:
             qty = int(new_quantity)
@@ -1074,7 +422,7 @@ def get_history_records(self, student_name=None):
             else:
                 status = "In Stock"
 
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE hardware 
@@ -1082,45 +430,40 @@ def get_history_records(self, student_name=None):
                 WHERE item_id = ?
             """, (qty, price, status, item_id))
             conn.commit()
-            cursor.execute(
-                "SELECT item_name, category FROM hardware WHERE item_id = ?", (item_id,))
-            item_row = cursor.fetchone()
             conn.close()
-            if item_row:
-                sync_hardware_to_supabase(
-                    item_row[0], item_row[1], qty, price, item_id)
             logger.info(
                 f"HARDWARE UPDATED: Item ID {item_id} -> Qty: {qty}, Price: {price}")
+            log_activity(
+                self.db_name, actor_username=actor_username, actor_role="ADMIN",
+                action="Hardware Updated", entity_type="hardware",
+                entity_id=item_id, quantity=qty, status=status,
+                details=f"Inventory quantity/price updated. Unit price: {price}."
+            )
             return True, "Item updated successfully."
         except ValueError:
             return False, "Quantity must be an integer and price must be a number."
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error updating hardware: {e}")
             return False, f"Database error: {e}"
 
-    def delete_hardware(self, item_id):
+    def delete_hardware(self, item_id, actor_username='ADMIN'):
         """Deletes an item from the hardware table."""
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT item_name, category FROM hardware WHERE item_id = ?", (item_id,))
-            item_row = cursor.fetchone()
             cursor.execute(
                 "DELETE FROM hardware WHERE item_id = ?", (item_id,))
             conn.commit()
             conn.close()
-            if item_row:
-                try:
-                    with psycopg.connect(DATABASE_URL) as pg:
-                        with pg.cursor() as cur:
-                            cur.execute(
-                                "DELETE FROM hardware WHERE item_id = %s", (item_id,))
-                except Exception as exc:
-                    logger.warning(f"Supabase hardware delete warning: {exc}")
             logger.info(f"HARDWARE DELETED: Item ID {item_id}")
+            log_activity(
+                self.db_name, actor_username=actor_username, actor_role="ADMIN",
+                action="Hardware Deleted", entity_type="hardware",
+                entity_id=item_id, status="Deleted",
+                details="Inventory item deleted."
+            )
             return True, "Item deleted successfully."
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error deleting hardware: {e}")
             return False, f"Database error: {e}"
 
@@ -1132,7 +475,7 @@ def get_history_records(self, student_name=None):
             return False, "Student ID cannot be empty."
 
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
 
             cursor.execute(
@@ -1157,51 +500,23 @@ def get_history_records(self, student_name=None):
             """, (new_qty, new_status, item_id))
 
             cursor.execute("""
-                INSERT INTO asset_loans
-                    (item_id, student_id, created_at, checkout_time, return_time, status)
-                VALUES (?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), NULL, 'Active')
+                INSERT INTO asset_loans (item_id, student_id, status)
+                VALUES (?, ?, 'Active')
             """, (item_id, student_id.strip()))
 
             conn.commit()
             conn.close()
-            try:
-                item_name = conn.execute(
-                    "SELECT item_name FROM hardware WHERE item_id = ?", (item_id,)).fetchone()
-            except Exception:
-                item_name = None
-            try:
-                if DATABASE_URL:
-                    with psycopg.connect(DATABASE_URL) as pg:
-                        with pg.cursor() as cur:
-                            cur.execute(
-                                """
-                                INSERT INTO asset_loans
-                                    (item_id, student_id, created_at, checkout_time, return_time, status)
-                                VALUES (%s, %s,
-                                    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila',
-                                    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila',
-                                    NULL, 'Active')
-                                ON CONFLICT DO NOTHING
-                                """,
-                                (item_id, student_id.strip()),
-                            )
-                            cur.execute(
-                                "UPDATE hardware SET quantity = %s, status = %s WHERE item_id = %s",
-                                (new_qty, new_status, item_id),
-                            )
-            except Exception as exc:
-                logger.warning(f"Supabase checkout sync warning: {exc}")
             logger.info(
                 f"CHECKOUT EVENT: Item ID {item_id} issued to Student '{student_id}'. New Qty: {new_qty}")
             return True, "Item checked out successfully."
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error during checkout: {e}")
             return False, f"Database error: {e}"
 
     def return_item(self, item_id):
         """Increments quantity by 1, updates status, and closes the active loan."""
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
 
             cursor.execute(
@@ -1222,7 +537,7 @@ def get_history_records(self, student_name=None):
 
             cursor.execute("""
                 UPDATE asset_loans 
-                SET status = 'Returned', return_time = datetime('now', '+8 hours')
+                SET status = 'Returned', return_time = CURRENT_TIMESTAMP 
                 WHERE loan_id = (
                     SELECT loan_id FROM asset_loans 
                     WHERE item_id = ? AND status = 'Active' 
@@ -1232,24 +547,10 @@ def get_history_records(self, student_name=None):
 
             conn.commit()
             conn.close()
-            try:
-                if DATABASE_URL:
-                    with psycopg.connect(DATABASE_URL) as pg:
-                        with pg.cursor() as cur:
-                            cur.execute(
-                                "UPDATE hardware SET quantity = %s, status = %s WHERE item_id = %s",
-                                (new_qty, new_status, item_id),
-                            )
-                            cur.execute(
-                                "UPDATE asset_loans SET status = 'Returned', return_time = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') WHERE loan_id = (SELECT loan_id FROM asset_loans WHERE item_id = %s AND status = 'Active' ORDER BY loan_id DESC LIMIT 1)",
-                                (item_id,),
-                            )
-            except Exception as exc:
-                logger.warning(f"Supabase return sync warning: {exc}")
             logger.info(
                 f"RETURN EVENT: Item ID {item_id} returned. New Qty: {new_qty}")
             return True, "Item returned successfully."
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error during return: {e}")
             return False, f"Database error: {e}"
 
@@ -1259,7 +560,7 @@ def get_history_records(self, student_name=None):
         Available Qty = Total Qty - (Approved or Pending Reservations)
         """
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
 
             query = """
@@ -1279,7 +580,7 @@ def get_history_records(self, student_name=None):
             records = cursor.fetchall()
             conn.close()
             return records
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error fetching catalog with availability: {e}")
             return []
 
@@ -1312,7 +613,7 @@ def get_history_records(self, student_name=None):
         # 2. Fallback: If self attributes are None, use the same database as the app
         if conn is None:
             try:
-                conn = sqlite3.connect(self.db_name)
+                conn = db_connect(self.db_name)
             except Exception as conn_err:
                 return False, f"Could not establish database connection: {conn_err}"
 
@@ -1325,34 +626,17 @@ def get_history_records(self, student_name=None):
             """
             cursor.execute(query, (item_id, student_id, start_time, end_time))
             conn.commit()
-            reservation_id = cursor.lastrowid
 
             # Close local connection if created dynamically
             if hasattr(conn, 'close') and not hasattr(self, 'db'):
                 conn.close()
 
-            try:
-                if DATABASE_URL:
-                    with psycopg.connect(DATABASE_URL) as pg:
-                        with pg.cursor() as cur:
-                            cur.execute(
-                                """
-                                INSERT INTO reservations (reservation_id, item_id, student_id, start_time, end_time, status, notified)
-                                VALUES (%s, %s, %s, %s, %s, 'Pending', 0)
-                                ON CONFLICT (reservation_id) DO UPDATE SET
-                                    item_id = EXCLUDED.item_id,
-                                    student_id = EXCLUDED.student_id,
-                                    start_time = EXCLUDED.start_time,
-                                    end_time = EXCLUDED.end_time,
-                                    status = EXCLUDED.status,
-                                    notified = EXCLUDED.notified
-                                """,
-                                (reservation_id, item_id,
-                                 student_id, start_time, end_time),
-                            )
-            except Exception as exc:
-                logger.warning(f"Supabase reservation sync warning: {exc}")
-
+            log_activity(
+                self.db_name, actor_username=student_id, actor_role="USER",
+                action="Reservation Submitted", entity_type="reservation",
+                entity_id=None, student_id=student_id, status="Pending",
+                details=f"Reservation submitted from {start_time} to {end_time}."
+            )
             return True, "Reservation request submitted for approval!"
 
         except Exception as e:
@@ -1362,7 +646,7 @@ def get_history_records(self, student_name=None):
     def fetch_all_reservations(self):
         """Fetches active reservation requests joined with item details."""
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT r.reservation_id, h.item_name, r.student_id, r.start_time, r.end_time, 
@@ -1375,17 +659,17 @@ def get_history_records(self, student_name=None):
             records = cursor.fetchall()
             conn.close()
             return records
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error fetching reservations: {e}")
             return []
 
-    def update_reservation_status(self, reservation_id, status):
+    def update_reservation_status(self, reservation_id, status, actor_username='ADMIN'):
         """
         Updates status ('Approved' or 'Rejected') for admin review.
         Decrements hardware stock on approval and resets 'notified' flag to 0.
         """
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
 
             # 1. Fetch current status and item_id for this reservation
@@ -1442,24 +726,18 @@ def get_history_records(self, student_name=None):
             conn.commit()
             conn.close()
 
-            try:
-                if DATABASE_URL:
-                    with psycopg.connect(DATABASE_URL) as pg:
-                        with pg.cursor() as cur:
-                            cur.execute(
-                                "UPDATE reservations SET status = %s, notified = 0 WHERE reservation_id = %s",
-                                (target_status, reservation_id),
-                            )
-            except Exception as exc:
-                logger.warning(
-                    f"Supabase reservation status sync warning: {exc}")
-
             logger.info(
                 f"RESERVATION STATUS UPDATED: ID {reservation_id} set to '{target_status}'."
             )
+            log_activity(
+                self.db_name, actor_username=actor_username, actor_role="ADMIN",
+                action=f"Reservation {target_status}", entity_type="reservation",
+                entity_id=reservation_id, status=target_status,
+                details=f"Administrator changed reservation status to {target_status}."
+            )
             return True, f"Reservation status updated to '{target_status}'."
 
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error updating reservation status: {e}")
             return False, f"Database error: {e}"
 
@@ -1469,7 +747,7 @@ def get_history_records(self, student_name=None):
         """
         notifications = []
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -1497,7 +775,7 @@ def get_history_records(self, student_name=None):
 
             conn.commit()
             conn.close()
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error retrieving user notifications: {e}")
 
         return notifications
@@ -1505,7 +783,7 @@ def get_history_records(self, student_name=None):
     def delete_reservation(self, reservation_id):
         """Deletes a reservation entry from the database table."""
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -1519,7 +797,7 @@ def get_history_records(self, student_name=None):
                 f"RESERVATION DELETED: ID {reservation_id} removed from database."
             )
             return True, f"Reservation ID {reservation_id} deleted successfully."
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.error(f"Error deleting reservation: {e}")
             return False, f"Database error: {e}"
 
@@ -1528,7 +806,7 @@ def get_history_records(self, student_name=None):
     def export_to_csv(self, filename="inventory_report.csv"):
         """Exports complete active loan usage history to CSV file."""
         try:
-            conn = sqlite3.connect(self.db_name)
+            conn = db_connect(self.db_name)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT l.loan_id, h.item_name, l.student_id, l.checkout_time, l.return_time, l.status
