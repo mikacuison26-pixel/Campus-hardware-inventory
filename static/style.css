@@ -369,6 +369,11 @@ th {
     color: var(--red);
 }
 
+.status-rejected,
+.status-return-rejected {
+    color: var(--red);
+}
+
 .split {
     display: grid;
     gap: 16px;

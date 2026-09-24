@@ -202,21 +202,44 @@ class HardwareController:
         if pg_conn is not None:
             try:
                 query = """
-                    SELECT h.item_name, h.category,
-                        l.student_name, l.student_id,
-                        1 AS quantity, l.status,
-                        l.created_at, l.checkout_time, l.return_time
-                    FROM asset_loans l
-                    JOIN hardware h ON h.item_id = l.item_id
-                    WHERE TRUE
+                    SELECT item_name, category, student_name, student_id,
+                           quantity, status, created_at, checkout_time, return_time
+                    FROM (
+                        SELECT h.item_name, h.category, l.student_name, l.student_id,
+                               1 AS quantity, l.status, l.created_at,
+                               l.checkout_time, l.return_time,
+                               l.created_at AS sort_time, l.loan_id AS sort_id
+                        FROM asset_loans l
+                        JOIN hardware h ON h.item_id = l.item_id
+
+                        UNION ALL
+
+                        SELECT h.item_name, h.category, b.student_name, b.student_id,
+                               b.quantity, 'Rejected' AS status, b.created_at,
+                               NULL::timestamp AS checkout_time,
+                               NULL::timestamp AS return_time,
+                               b.created_at AS sort_time, b.request_id AS sort_id
+                        FROM borrow_requests b
+                        JOIN hardware h ON h.item_id = b.item_id
+                        WHERE LOWER(b.status) = 'rejected'
+
+                        UNION ALL
+
+                        SELECT h.item_name, h.category, l.student_name, l.student_id,
+                               1 AS quantity, 'Return Rejected' AS status, r.created_at,
+                               NULL::timestamp AS checkout_time,
+                               NULL::timestamp AS return_time,
+                               r.created_at AS sort_time, r.request_id AS sort_id
+                        FROM return_requests r
+                        JOIN asset_loans l ON l.loan_id = r.loan_id
+                        JOIN hardware h ON h.item_id = l.item_id
+                        WHERE LOWER(r.status) = 'rejected'
+                    ) AS history_rows
+                    WHERE (%s IS NULL OR student_name = %s)
+                    ORDER BY sort_time DESC NULLS LAST, sort_id DESC
                 """
-                params = []
-                if student_name:
-                    query += " AND l.student_name = %s"
-                    params.append(student_name)
-                query += " ORDER BY l.loan_id DESC"
                 with pg_conn.cursor() as cursor:
-                    cursor.execute(query, params)
+                    cursor.execute(query, (student_name, student_name))
                     return cursor.fetchall()
             except Exception as e:
                 logger.error(f"Error fetching loan history: {e}")
@@ -226,20 +249,41 @@ class HardwareController:
         try:
             with sqlite3.connect(self.db_name) as conn:
                 query = """
-                    SELECT h.item_name, h.category,
-                        l.student_name, l.student_id,
-                        1 AS quantity, l.status,
-                        l.created_at, l.checkout_time, l.return_time
-                    FROM asset_loans l
-                    JOIN hardware h ON h.item_id = l.item_id
-                    WHERE 1 = 1
+                    SELECT item_name, category, student_name, student_id,
+                           quantity, status, created_at, checkout_time, return_time
+                    FROM (
+                        SELECT h.item_name, h.category, l.student_name, l.student_id,
+                               1 AS quantity, l.status, l.created_at,
+                               l.checkout_time, l.return_time,
+                               l.created_at AS sort_time, l.loan_id AS sort_id
+                        FROM asset_loans l
+                        JOIN hardware h ON h.item_id = l.item_id
+
+                        UNION ALL
+
+                        SELECT h.item_name, h.category, b.student_name, b.student_id,
+                               b.quantity, 'Rejected' AS status, b.created_at,
+                               NULL AS checkout_time, NULL AS return_time,
+                               b.created_at AS sort_time, b.request_id AS sort_id
+                        FROM borrow_requests b
+                        JOIN hardware h ON h.item_id = b.item_id
+                        WHERE LOWER(b.status) = 'rejected'
+
+                        UNION ALL
+
+                        SELECT h.item_name, h.category, l.student_name, l.student_id,
+                               1 AS quantity, 'Return Rejected' AS status, r.created_at,
+                               NULL AS checkout_time, NULL AS return_time,
+                               r.created_at AS sort_time, r.request_id AS sort_id
+                        FROM return_requests r
+                        JOIN asset_loans l ON l.loan_id = r.loan_id
+                        JOIN hardware h ON h.item_id = l.item_id
+                        WHERE LOWER(r.status) = 'rejected'
+                    ) AS history_rows
+                    WHERE (? IS NULL OR student_name = ?)
+                    ORDER BY sort_time DESC, sort_id DESC
                 """
-                params = []
-                if student_name:
-                    query += " AND l.student_name = ?"
-                    params.append(student_name)
-                query += " ORDER BY l.loan_id DESC"
-                return conn.execute(query, params).fetchall()
+                return conn.execute(query, (student_name, student_name)).fetchall()
         except sqlite3.Error as e:
             logger.error(f"Error fetching loan history: {e}")
             return []
