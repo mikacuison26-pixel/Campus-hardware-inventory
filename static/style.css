@@ -369,11 +369,6 @@ th {
     color: var(--red);
 }
 
-.status-rejected,
-.status-return-rejected {
-    color: var(--red);
-}
-
 .split {
     display: grid;
     gap: 16px;
@@ -483,19 +478,4 @@ th {
     .request>span:last-child {
         width: 100%
     }
-}
-
-.status-rejected {
-    color: #a33d4f;
-    font-weight: 700;
-}
-
-.status-returned {
-    color: #35613f;
-    font-weight: 700;
-}
-
-.status-active {
-    color: #35613f;
-    font-weight: 700;
 }
