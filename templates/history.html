@@ -1,145 +1,50 @@
 {% extends "base.html" %}
-
 {% block content %}
-
 <div class="page-heading">
-    <p class="eyebrow">
-        {{ 'Administrator' if is_admin else 'Student' }} area
-    </p>
-
-    ```
+    <p class="eyebrow">{{ 'Administrator' if is_admin else 'Student' }} area</p>
     <h1>History</h1>
-
-    <p class="page-summary">
-        Review borrowed item activity and quantity records.
-    </p>
-    ```
-
+    <p class="page-summary">Every request, approval, rejection, return, login, inventory change, and other system action is recorded here.</p>
 </div>
 
 <section class="panel">
-
-    ```
     <div class="panel-heading">
-        <h2>
-            {{ 'System History' if is_admin else 'My Borrow History' }}
-        </h2>
+        <h2>{{ 'System History' if is_admin else 'My History' }}</h2>
     </div>
-
     <table>
         <thead>
             <tr>
+                <th>Action</th>
                 <th>Item</th>
-                <th>Category</th>
-
-                {% if is_admin %}
-                <th>Student Name</th>
-                {% endif %}
-
+                {% if is_admin %}<th>Actor</th>{% endif %}
                 <th>Student ID</th>
                 <th>Quantity</th>
                 <th>Status</th>
-                <th>Created At</th>
-                <th>Checkout Time</th>
-                <th>Return Time</th>
+                <th>Details</th>
+                <th>Date / Time</th>
             </tr>
         </thead>
-
         <tbody>
             {% for row in history %}
             <tr>
-
-                <!-- ITEM -->
+                <td>{{ row[3] }}</td>
+                <td>{{ row[6] or '—' }}</td>
+                {% if is_admin %}<td>{{ row[1] or '—' }}</td>{% endif %}
+                <td>{{ row[8] or '—' }}</td>
+                <td>{{ row[9] if row[9] is not none else '—' }}</td>
                 <td>
-                    {{ row[0] }}
+                    {% if row[10] %}
+                    <span class="status status-{{ row[10]|lower|replace(' ', '-') }}">{{ row[10] }}</span>
+                    {% else %}—{% endif %}
                 </td>
-
-                <!-- CATEGORY -->
-                <td>
-                    {{ row[1] }}
-                </td>
-
-                <!-- STUDENT NAME - ADMIN ONLY -->
-                {% if is_admin %}
-                <td>
-                    {{ row[2] }}
-                </td>
-                {% endif %}
-
-                <!-- STUDENT ID -->
-                <td>
-                    {{ row[3] if row[3] else '—' }}
-                </td>
-
-                <!-- QUANTITY -->
-                <td>
-                    {{ row[4] if row[4] is not none else '—' }}
-                </td>
-
-                <!-- STATUS -->
-                <td>
-                    {% if row[5]|lower == 'rejected' %}
-                    <span class="status status-rejected">
-                        Rejected
-                    </span>
-
-                    {% elif row[5]|lower == 'returned' %}
-                    <span class="status status-returned">
-                        Returned
-                    </span>
-
-                    {% elif row[5]|lower == 'active' %}
-                    <span class="status status-active">
-                        Active
-                    </span>
-
-                    {% else %}
-                    <span class="status status-{{ row[5]|lower|replace(' ', '-') }}">
-                        {{ row[5] }}
-                    </span>
-                    {% endif %}
-                </td>
-
-                <!-- CREATED AT -->
-                <td>
-                    {% if row[6] %}
-                    {{ row[6]|localtime }}
-                    {% else %}
-                    —
-                    {% endif %}
-                </td>
-
-                <!-- CHECKOUT TIME -->
-                <td>
-                    {% if row[7] %}
-                    {{ row[7]|localtime }}
-                    {% else %}
-                    —
-                    {% endif %}
-                </td>
-
-                <!-- RETURN TIME -->
-                <td>
-                    {% if row[8] %}
-                    {{ row[8]|localtime }}
-                    {% else %}
-                    —
-                    {% endif %}
-                </td>
-
+                <td>{{ row[11] or '—' }}</td>
+                <td>{{ row[12] }}</td>
             </tr>
-
             {% else %}
             <tr>
-                <td colspan="{{ 9 if is_admin else 8 }}">
-                    No borrowing history found.
-                </td>
+                <td colspan="{{ 8 if is_admin else 7 }}">No system activity found.</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-    ```
-
 </section>
-
 {% endblock %}
