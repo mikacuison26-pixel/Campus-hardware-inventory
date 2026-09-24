@@ -6,19 +6,15 @@
         {{ 'Administrator' if is_admin else 'Student' }} area
     </p>
 
-    ```
     <h1>History</h1>
 
     <p class="page-summary">
         Review borrowed item activity and quantity records.
     </p>
-    ```
-
 </div>
 
 <section class="panel">
 
-    ```
     <div class="panel-heading">
         <h2>
             {{ 'System History' if is_admin else 'My Borrow History' }}
@@ -151,8 +147,6 @@
         </tbody>
 
     </table>
-    ```
-
 </section>
 
 {% endblock %}
