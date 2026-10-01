@@ -352,15 +352,34 @@ def admin_catalog():
 @app.route("/admin/requests")
 @admin_required
 def admin_requests():
-    auth, hardware = controllers()
+    try:
+        auth, hardware = controllers()
 
-    return render_template(
-        "admin_requests.html",
-        borrowed=hardware.get_borrowed_items(),
-        pending_borrows=hardware.get_pending_borrow_requests(),
-        pending_returns=hardware.get_pending_return_requests(),
-        reset_requests=auth.fetch_pending_reset_requests(),
-    )
+        print("ADMIN REQUESTS: controllers created", flush=True)
+
+        borrowed = hardware.get_borrowed_items()
+        print("ADMIN REQUESTS: borrowed OK", flush=True)
+
+        pending_borrows = hardware.get_pending_borrow_requests()
+        print("ADMIN REQUESTS: pending borrows OK", flush=True)
+
+        pending_returns = hardware.get_pending_return_requests()
+        print("ADMIN REQUESTS: pending returns OK", flush=True)
+
+        reset_requests = auth.fetch_pending_reset_requests()
+        print("ADMIN REQUESTS: reset requests OK", flush=True)
+
+        return render_template(
+            "admin_requests.html",
+            borrowed=borrowed,
+            pending_borrows=pending_borrows,
+            pending_returns=pending_returns,
+            reset_requests=reset_requests,
+        )
+
+    except Exception as e:
+        print(f"ADMIN REQUESTS ERROR: {e}", flush=True)
+        raise
 
 
 @app.route("/catalog")
