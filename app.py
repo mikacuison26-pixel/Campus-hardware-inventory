@@ -270,14 +270,19 @@ def verify_otp(action):
             if action == "register":
                 # OTP matches, create the user
                 try:
-                    ok, msg = AuthController.register_user(
+                    auth_controller = AuthController()
+
+                    ok, msg = auth_controller.register_user(
                         data['username'],
                         data['email'],
                         data['password'],
                         role=data['role']
                     )
 
-                    print(f"REGISTER RESULT: ok={ok}, msg={msg}", flush=True)
+                    print(
+                        f"REGISTER RESULT: ok={ok}, msg={msg}",
+                        flush=True
+                    )
 
                 except Exception as e:
                     print(f"REGISTER ERROR: {e}", flush=True)
@@ -294,7 +299,9 @@ def verify_otp(action):
 
             elif action == "reset":
                 # OTP matches, submit the reset request to Admin
-                ok, msg = AuthController.submit_password_reset_request(
+                auth_controller = AuthController()
+
+                ok, msg = auth_controller.request_password_reset(
                     data['username'],
                     data['email'],
                     data['new_password']
