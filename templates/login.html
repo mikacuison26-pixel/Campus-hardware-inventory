@@ -1,8 +1,13 @@
 {% extends "forms.html" %}
 {% set title = "Sign in" %}{% set button = "Sign in" %}
-{% block fields %}<label>Username or email<input name="username" required autofocus></label><label>Password<span class="password-field"><input id="login-password" type="password" name="password" required><button class="password-toggle" type="button" aria-controls="login-password" aria-pressed="false">Show</button></span></label>{% endblock %}
-{% block links %}<a href="{{ url_for('register') }}">Create account</a><a href="{{ url_for('reset') }}">Reset password</a>{% endblock %}
-{% block scripts %}<script>
+{% block fields %}<label>Username or email<input name="username" required autofocus></label><label>Password<span
+		class="password-field"><input id="login-password" type="password" name="password" required><button
+			class="password-toggle" type="button" aria-controls="login-password"
+			aria-pressed="false">Show</button></span></label>{% endblock %}
+{% block links %}<a href="{{ url_for('register') }}">Create account</a><a href="{{ url_for('reset_request') }}">Reset
+	password</a>{% endblock %}
+{% block scripts %}
+<script>
 	const passwordInput = document.querySelector('#login-password');
 	const passwordToggle = document.querySelector('.password-toggle');
 
