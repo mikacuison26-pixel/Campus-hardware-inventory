@@ -33,6 +33,7 @@ SMTP_LOGIN = os.getenv("BREVO_SMTP_LOGIN")
 SMTP_PASSWORD = os.getenv("BREVO_SMTP_PASSWORD")
 SMTP_SENDER = os.getenv("BREVO_SENDER_EMAIL")
 
+
 def send_otp_email(receiver_email, otp, intent):
     """Sends a 6-digit OTP using Brevo SMTP."""
 
@@ -252,6 +253,7 @@ def reset_request():
 
 @app.route("/verify-otp/<action>", methods=["GET", "POST"])
 def verify_otp(action):
+
     # Determine which session data to use
     session_key = 'pending_user' if action == "register" else 'pending_reset'
 
@@ -264,27 +266,56 @@ def verify_otp(action):
         data = session[session_key]
 
         if user_otp == data['otp']:
+
             if action == "register":
                 # OTP matches, create the user
-                ok, msg = AuthController.register_user(
-                    data['username'], data['email'], data['password'], role=data['role'])
+                try:
+                    ok, msg = AuthController.register_user(
+                        data['username'],
+                        data['email'],
+                        data['password'],
+                        role=data['role']
+                    )
+
+                    print(f"REGISTER RESULT: ok={ok}, msg={msg}", flush=True)
+
+                except Exception as e:
+                    print(f"REGISTER ERROR: {e}", flush=True)
+                    raise
+
                 session.pop(session_key, None)
-                flash("Account successfully verified and created!",
-                      "success" if ok else "warning")
+
+                flash(
+                    "Account successfully verified and created!",
+                    "success" if ok else "warning"
+                )
+
                 return redirect(url_for("login"))
 
             elif action == "reset":
                 # OTP matches, submit the reset request to Admin
                 ok, msg = AuthController.submit_password_reset_request(
-                    data['username'], data['email'], data['new_password'])
+                    data['username'],
+                    data['email'],
+                    data['new_password']
+                )
+
                 session.pop(session_key, None)
-                flash("Email verified! Your password reset request has been submitted.",
-                      "success" if ok else "danger")
+
+                flash(
+                    "Email verified! Your password reset request has been submitted.",
+                    "success" if ok else "danger"
+                )
+
                 return redirect(url_for("login"))
+
         else:
             flash("Invalid OTP code. Try again.", "danger")
 
-    return render_template("otp_verify.html", action_url=url_for('verify_otp', action=action))
+    return render_template(
+        "otp_verify.html",
+        action_url=url_for('verify_otp', action=action)
+    )
 
 
 @app.route("/dashboard")
