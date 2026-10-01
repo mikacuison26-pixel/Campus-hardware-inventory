@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="auth-card">
+    <p class="eyebrow">Campus Hardware Inventory</p>
+
+    <h1>Verify Your Email</h1>
+
+    <p>Enter the 6-digit code sent to your email address.</p>
+
+    <form method="post">
+        <label>
+            Enter 6-Digit Code
+            <input type="text" name="otp_code" maxlength="6" pattern="\d{6}" placeholder="123456" required autofocus>
+        </label>
+
+        <button type="submit">Verify Code</button>
+    </form>
+
+    <nav>
+        <a href="{{ url_for('login') }}">Back to sign in</a>
+    </nav>
+</section>
+{% endblock %}
