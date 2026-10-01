@@ -33,7 +33,6 @@ SMTP_LOGIN = os.getenv("BREVO_SMTP_LOGIN")
 SMTP_PASSWORD = os.getenv("BREVO_SMTP_PASSWORD")
 SMTP_SENDER = os.getenv("BREVO_SENDER_EMAIL")
 
-
 def send_otp_email(receiver_email, otp, intent):
     """Sends a 6-digit OTP using Brevo SMTP."""
 
@@ -52,6 +51,7 @@ def send_otp_email(receiver_email, otp, intent):
             server.login(SMTP_LOGIN, SMTP_PASSWORD)
             server.send_message(msg)
 
+        print(f"OTP email sent to {receiver_email}")
         return True
 
     except Exception as e:
